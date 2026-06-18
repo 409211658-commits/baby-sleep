@@ -338,7 +338,7 @@ const fmtDur = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtDurShort = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtMinOnly = m => m===null||isNaN(m)?'--':`${m}分钟`;
 
-// ==================== 传播计划间隔 ====================
+// 传播计划间隔，自动计算入睡和放床时间
 function propagate(rec) {
   let naps = rec.naps;
   for (let i = 0; i < naps.length; i++) {
@@ -362,7 +362,6 @@ function propagate(rec) {
   }
 }
 
-// ==================== 计算统计 ====================
 function computeAll(rec) {
   let naps = rec.naps, wake = rec.wake_up_time, night = rec.night;
   naps.forEach((nap,i)=>{
@@ -556,7 +555,7 @@ function editWakeWindow(idx) {
     if(!base) return alert('缺少基准时间');
     nap.asleep_time = toTime(toMin(base) + min);
     nap.bed_time = toTime(toMin(base) + min - 10);
-    nap.planned_wake_window = min;   // 记住计划间隔
+    nap.planned_wake_window = min;
     propagate(currentData);
     saveAndRender();
   });
@@ -617,14 +616,18 @@ function openTimePicker(type, napIdx) {
     def = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   }
   currentPicker = { type, napIdx, def, onChange: val => {
-    if(type==='wake') currentData.wake_up_time = val;
-    else if(type.startsWith('nap')) {
+    if(type==='wake') {
+      currentData.wake_up_time = val;
+      propagate(currentData);
+    } else if(type.startsWith('nap')) {
       let nap = currentData.naps[napIdx];
       if(type==='napBed') {
         nap.bed_time = val;
-        delete nap.planned_wake_window;   // 手动改放床时间，取消计划间隔
+        delete nap.planned_wake_window;
       } else if(type==='napAsleep') {
         nap.asleep_time = val;
+        // 自动设置放床时间为入睡时间-10分钟
+        nap.bed_time = toTime(toMin(val) - 10);
         delete nap.planned_wake_window;
       } else if(type==='napWake') {
         nap.wake_time = val;
@@ -635,6 +638,7 @@ function openTimePicker(type, napIdx) {
         delete currentData.night.planned_wake_window;
       } else if(type==='nightAsleep') {
         currentData.night.asleep_time = val;
+        currentData.night.bed_time = toTime(toMin(val) - 10);
         delete currentData.night.planned_wake_window;
       } else if(type==='nightWake') {
         currentData.night.wake_time = val;
@@ -782,6 +786,7 @@ async function loadCurrentDate() {
   renderAll();
   requestAnimationFrame(() => { window.scrollTo(0, scrollPosition); });
 }
+// 复制昨日：只复制清醒间隔、入睡方式等，不复制具体时间，以便根据今日起床时间重新计算
 async function copyYesterday() {
   let yesterday = shiftDate(currentDate, -1);
   let rec = await loadRecord(yesterday);
@@ -789,8 +794,23 @@ async function copyYesterday() {
   if(!confirm(`复制昨天 (${yesterday}) 的所有记录到今天？今日数据将被覆盖。`)) return;
   let copy = JSON.parse(JSON.stringify(rec));
   copy.date = currentDate;
+  // 清除备注
   copy.naps.forEach(n => { n.note = ''; n.sleep_note = ''; });
   copy.night.note = ''; copy.night.sleep_note = '';
+  // 提取昨天的清醒间隔作为计划间隔，同时清除具体时间点
+  copy.naps.forEach((nap, i) => {
+    nap.planned_wake_window = nap.wake_window || null;
+    nap.bed_time = '';
+    nap.asleep_time = '';
+    nap.wake_time = '';
+    delete nap.sleep_duration;
+  });
+  copy.night.planned_wake_window = copy.night.before_night_window || null;
+  copy.night.bed_time = '';
+  copy.night.asleep_time = '';
+  copy.night.wake_time = '';
+  delete copy.night.sleep_duration;
+  // 起床时间保留昨天的，但用户可以修改，修改后会触发propagate
   currentData = copy;
   propagate(currentData);
   await saveRecord(currentData);
