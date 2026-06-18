@@ -43,6 +43,9 @@
     box-shadow: var(--shadow);
     margin-bottom: 12px;
     border-radius: 0 0 var(--radius) var(--radius);
+    position: sticky;
+    top: 0;
+    z-index: 10;
   }
   .date-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   .date-nav { display: flex; align-items: center; gap: 8px; }
@@ -147,9 +150,8 @@
     box-shadow: var(--shadow);
   }
   .night-label { background: #3F51B5; color: white; padding: 2px 8px; border-radius: 12px; font-size: 14px; margin-left: 6px; }
-  .mode-toggle { position: fixed; top: 10px; right: 10px; background: var(--card); border: none; font-size: 24px; cursor: pointer; z-index: 100; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
+  .mode-toggle { position: fixed; top: 10px; right: 10px; background: var(--card); border: none; font-size: 24px; cursor: pointer; z-index: 11; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
 
-  /* 入睡时间那一行强制不换行 */
   .nowrap-row { flex-wrap: nowrap !important; }
   .nowrap-row .time-btn { padding: 6px 8px; font-size: 14px; }
   .nowrap-row .calc-value { font-size: 14px; padding: 2px 6px; }
@@ -259,6 +261,7 @@
 // ==================== 数据库 ====================
 const DB_NAME = 'BabySleepDB8', STORE_NAME = 'records';
 let db, currentDate = getTodayLocal(), currentData = null;
+let scrollPosition = 0;   // 记住滚动位置
 
 function getLocalDateString(date) {
   const d = date instanceof Date ? date : new Date(date + 'T00:00:00');
@@ -620,10 +623,13 @@ function saveAndRender() {
   renderAll();
 }
 
+// ==================== 日期切换（保持滚动位置） ====================
 async function changeDate(delta) {
+  scrollPosition = window.scrollY;  // 记住当前位置
   currentDate = shiftDate(currentDate, delta);
   await loadCurrentDate();
 }
+
 async function loadCurrentDate() {
   let rec = await loadRecord(currentDate);
   if(!rec) {
@@ -636,7 +642,13 @@ async function loadCurrentDate() {
   }
   currentData = rec;
   renderAll();
+
+  // 恢复滚动位置
+  requestAnimationFrame(() => {
+    window.scrollTo(0, scrollPosition);
+  });
 }
+
 async function copyYesterday() {
   let yesterday = shiftDate(currentDate, -1);
   let rec = await loadRecord(yesterday);
