@@ -163,7 +163,6 @@
   .nowrap-row .calc-value { font-size: 14px; padding: 2px 6px; }
   .nowrap-row span { font-size: 14px; white-space: nowrap; }
 
-  /* 时间滚轮选择器 */
   .picker-overlay {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; z-index: 200;
@@ -267,7 +266,7 @@
   </div>
 </div>
 
-<!-- 时长选择器（小时+分钟） -->
+<!-- 时长选择器 -->
 <div id="durationPickerOverlay" class="picker-overlay" style="display:none;">
   <div class="picker-container">
     <div class="picker-header">
@@ -339,97 +338,7 @@ const fmtDur = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtDurShort = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtMinOnly = m => m===null||isNaN(m)?'--':`${m}分钟`;
 
-// 时长选择器状态
-let durationCallback = null;
-
-function showDurationPicker(currentMinutes, callback) {
-  durationCallback = callback;
-  const overlay = document.getElementById('durationPickerOverlay');
-  overlay.style.display = 'flex';
-  const h = Math.floor(currentMinutes / 60);
-  const m = currentMinutes % 60;
-  buildLoopWheel('durHourWheel', 0, 12, h);
-  buildLoopWheel('durMinuteWheel', 0, 59, m, 1);
-  document.getElementById('durationPreview').textContent = '';
-}
-
-function cancelDurationPicker() {
-  document.getElementById('durationPickerOverlay').style.display = 'none';
-  durationCallback = null;
-}
-
-function confirmDurationPicker() {
-  const hWheel = document.getElementById('durHourWheel');
-  const mWheel = document.getElementById('durMinuteWheel');
-  const getVal = (wheel) => {
-    let center = wheel.scrollTop + wheel.clientHeight/2;
-    let best = null, minDist = Infinity;
-    [...wheel.children].forEach(el => {
-      let elCenter = el.offsetTop + el.offsetHeight/2;
-      let dist = Math.abs(center - elCenter);
-      if(dist < minDist) { minDist = dist; best = el; }
-    });
-    return best ? parseInt(best.dataset.value) : 0;
-  };
-  const hours = getVal(hWheel);
-  const minutes = getVal(mWheel);
-  const total = hours * 60 + minutes;
-  if (durationCallback) durationCallback(total);
-  cancelDurationPicker();
-}
-
-// 编辑清醒间隔 / 睡眠时长
-function editWakeWindow(idx) {
-  const nap = currentData.naps[idx];
-  const cur = nap.wake_window || nap.planned_wake_window || 90;
-  showDurationPicker(cur, (min) => {
-    let base = idx===0 ? currentData.wake_up_time : currentData.naps[idx-1].wake_time;
-    if(!base) return alert('缺少基准时间');
-    nap.asleep_time = toTime(toMin(base) + min);
-    nap.bed_time = toTime(toMin(base) + min - 10);
-    nap.planned_wake_window = min;
-    propagate(currentData);
-    saveAndRender();
-  });
-}
-
-function editNightWindow() {
-  const night = currentData.night;
-  const cur = night.before_night_window || night.planned_wake_window || 120;
-  showDurationPicker(cur, (min) => {
-    let base = currentData.naps.length ? currentData.naps[currentData.naps.length-1].wake_time : currentData.wake_up_time;
-    if(!base) return alert('缺少基准时间');
-    night.asleep_time = toTime(toMin(base) + min);
-    night.bed_time = toTime(toMin(base) + min - 10);
-    night.planned_wake_window = min;
-    propagate(currentData);
-    saveAndRender();
-  });
-}
-
-function editSleepDuration(idx) {
-  const nap = currentData.naps[idx];
-  if (!nap.asleep_time) return alert('请先填写入睡时间');
-  const cur = nap.sleep_duration || 60;
-  showDurationPicker(cur, (min) => {
-    nap.wake_time = toTime(toMin(nap.asleep_time) + min);
-    propagate(currentData);
-    saveAndRender();
-  });
-}
-
-function editNightDuration() {
-  const night = currentData.night;
-  if (!night.asleep_time) return alert('请先填写夜觉入睡时间');
-  const cur = night.sleep_duration || 600;
-  showDurationPicker(cur, (min) => {
-    night.wake_time = toTime(toMin(night.asleep_time) + min);
-    propagate(currentData);
-    saveAndRender();
-  });
-}
-
-// 传播计划间隔
+// ==================== 传播计划间隔 ====================
 function propagate(rec) {
   let naps = rec.naps;
   for (let i = 0; i < naps.length; i++) {
@@ -453,6 +362,7 @@ function propagate(rec) {
   }
 }
 
+// ==================== 计算统计 ====================
 function computeAll(rec) {
   let naps = rec.naps, wake = rec.wake_up_time, night = rec.night;
   naps.forEach((nap,i)=>{
@@ -489,6 +399,7 @@ function computeStats(rec) {
   return { awakeDur, dayTotal, nightTotal, total };
 }
 
+// ==================== 渲染 ====================
 function renderAll() {
   computeAll(currentData);
   let stats = computeStats(currentData);
@@ -598,6 +509,95 @@ function bindNightEvents() {
   document.querySelector('[data-action="editNightDuration"]').onclick = editNightDuration;
 }
 
+// ==================== 时长选择器 ====================
+let durationCallback = null;
+
+function showDurationPicker(currentMinutes, callback) {
+  durationCallback = callback;
+  const overlay = document.getElementById('durationPickerOverlay');
+  overlay.style.display = 'flex';
+  const h = Math.floor(currentMinutes / 60);
+  const m = currentMinutes % 60;
+  buildLoopWheel('durHourWheel', 0, 12, h);
+  buildLoopWheel('durMinuteWheel', 0, 59, m, 1);
+  document.getElementById('durationPreview').textContent = '';
+}
+
+function cancelDurationPicker() {
+  document.getElementById('durationPickerOverlay').style.display = 'none';
+  durationCallback = null;
+}
+
+function confirmDurationPicker() {
+  const hWheel = document.getElementById('durHourWheel');
+  const mWheel = document.getElementById('durMinuteWheel');
+  const getVal = (wheel) => {
+    let center = wheel.scrollTop + wheel.clientHeight/2;
+    let best = null, minDist = Infinity;
+    [...wheel.children].forEach(el => {
+      let elCenter = el.offsetTop + el.offsetHeight/2;
+      let dist = Math.abs(center - elCenter);
+      if(dist < minDist) { minDist = dist; best = el; }
+    });
+    return best ? parseInt(best.dataset.value) : 0;
+  };
+  const hours = getVal(hWheel);
+  const minutes = getVal(mWheel);
+  const total = hours * 60 + minutes;
+  if (durationCallback) durationCallback(total);
+  cancelDurationPicker();
+}
+
+function editWakeWindow(idx) {
+  const nap = currentData.naps[idx];
+  const cur = nap.wake_window || nap.planned_wake_window || 90;
+  showDurationPicker(cur, (min) => {
+    let base = idx===0 ? currentData.wake_up_time : currentData.naps[idx-1].wake_time;
+    if(!base) return alert('缺少基准时间');
+    nap.asleep_time = toTime(toMin(base) + min);
+    nap.bed_time = toTime(toMin(base) + min - 10);
+    nap.planned_wake_window = min;   // 记住计划间隔
+    propagate(currentData);
+    saveAndRender();
+  });
+}
+
+function editNightWindow() {
+  const night = currentData.night;
+  const cur = night.before_night_window || night.planned_wake_window || 120;
+  showDurationPicker(cur, (min) => {
+    let base = currentData.naps.length ? currentData.naps[currentData.naps.length-1].wake_time : currentData.wake_up_time;
+    if(!base) return alert('缺少基准时间');
+    night.asleep_time = toTime(toMin(base) + min);
+    night.bed_time = toTime(toMin(base) + min - 10);
+    night.planned_wake_window = min;
+    propagate(currentData);
+    saveAndRender();
+  });
+}
+
+function editSleepDuration(idx) {
+  const nap = currentData.naps[idx];
+  if (!nap.asleep_time) return alert('请先填写入睡时间');
+  const cur = nap.sleep_duration || 60;
+  showDurationPicker(cur, (min) => {
+    nap.wake_time = toTime(toMin(nap.asleep_time) + min);
+    propagate(currentData);
+    saveAndRender();
+  });
+}
+
+function editNightDuration() {
+  const night = currentData.night;
+  if (!night.asleep_time) return alert('请先填写夜觉入睡时间');
+  const cur = night.sleep_duration || 600;
+  showDurationPicker(cur, (min) => {
+    night.wake_time = toTime(toMin(night.asleep_time) + min);
+    propagate(currentData);
+    saveAndRender();
+  });
+}
+
 // ==================== 时间点选择器 ====================
 let currentPicker = null;
 function openTimePicker(type, napIdx) {
@@ -620,13 +620,25 @@ function openTimePicker(type, napIdx) {
     if(type==='wake') currentData.wake_up_time = val;
     else if(type.startsWith('nap')) {
       let nap = currentData.naps[napIdx];
-      if(type==='napBed') nap.bed_time = val;
-      else if(type==='napAsleep') nap.asleep_time = val;
-      else if(type==='napWake') nap.wake_time = val;
+      if(type==='napBed') {
+        nap.bed_time = val;
+        delete nap.planned_wake_window;   // 手动改放床时间，取消计划间隔
+      } else if(type==='napAsleep') {
+        nap.asleep_time = val;
+        delete nap.planned_wake_window;
+      } else if(type==='napWake') {
+        nap.wake_time = val;
+      }
     } else if(type.startsWith('night')) {
-      if(type==='nightBed') currentData.night.bed_time = val;
-      else if(type==='nightAsleep') currentData.night.asleep_time = val;
-      else if(type==='nightWake') currentData.night.wake_time = val;
+      if(type==='nightBed') {
+        currentData.night.bed_time = val;
+        delete currentData.night.planned_wake_window;
+      } else if(type==='nightAsleep') {
+        currentData.night.asleep_time = val;
+        delete currentData.night.planned_wake_window;
+      } else if(type==='nightWake') {
+        currentData.night.wake_time = val;
+      }
     }
     propagate(currentData);
     saveAndRender();
