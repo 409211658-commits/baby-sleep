@@ -35,7 +35,7 @@
     margin: 0 auto;
     min-height: 100vh;
     -webkit-tap-highlight-color: transparent;
-    font-size: 16px; /* 基础字号加大 */
+    font-size: 16px;
   }
   .header {
     padding: 16px;
@@ -70,21 +70,21 @@
     background: var(--card);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
-    padding: 18px;
-    margin-bottom: 18px;
+    padding: 14px;
+    margin-bottom: 16px;
     position: relative;
   }
   .card.night-card { border-left: 4px solid #3F51B5; }
-  .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
   .card-title { font-weight: 700; font-size: 18px; }
   .delete-btn { background: none; border: none; color: var(--danger); font-size: 22px; cursor: pointer; padding: 0 4px; line-height: 1; }
-  .field-row { display: flex; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
-  .field-label { width: 80px; font-size: 15px; color: var(--label); flex-shrink: 0; }
+  .field-row { display: flex; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 6px; }
+  .field-label { width: 68px; font-size: 15px; color: var(--label); flex-shrink: 0; }
   .calc-value {
     font-size: 15px;
     color: #2E7D32;
     background: var(--success-bg);
-    padding: 2px 10px;
+    padding: 2px 8px;
     border-radius: 10px;
     white-space: nowrap;
     cursor: pointer;
@@ -94,8 +94,8 @@
     background: var(--bg);
     border: 1px solid #ddd;
     border-radius: 10px;
-    padding: 8px 12px;
-    font-size: 16px;
+    padding: 6px 10px;
+    font-size: 15px;
     color: var(--text);
     cursor: pointer;
     font-family: inherit;
@@ -103,31 +103,31 @@
   }
   .time-btn:active { opacity: 0.7; }
   .nap-sleep-note {
-    padding: 8px 10px;
+    padding: 6px 8px;
     border: 1px solid #ddd;
     border-radius: 10px;
-    font-size: 15px;
+    font-size: 14px;
     background: var(--bg);
     color: var(--text);
     flex: 1;
-    min-width: 60px;
+    min-width: 50px;
     font-family: inherit;
   }
   select.field-input {
-    padding: 8px 10px;
+    padding: 6px 8px;
     border: 1px solid #ddd;
     border-radius: 10px;
-    font-size: 15px;
+    font-size: 14px;
     background: var(--bg);
     color: var(--text);
     font-family: inherit;
-    max-width: 140px;
+    max-width: 130px;
   }
   .field-input[type="text"] {
     flex: 1;
-    min-width: 80px;
-    font-size: 15px;
-    padding: 8px 10px;
+    min-width: 70px;
+    font-size: 14px;
+    padding: 6px 8px;
     border-radius: 10px;
     border: 1px solid #ddd;
     background: var(--bg);
@@ -146,8 +146,14 @@
     font-weight: 600;
     box-shadow: var(--shadow);
   }
-  .night-label { background: #3F51B5; color: white; padding: 2px 10px; border-radius: 12px; font-size: 14px; margin-left: 8px; }
+  .night-label { background: #3F51B5; color: white; padding: 2px 8px; border-radius: 12px; font-size: 14px; margin-left: 6px; }
   .mode-toggle { position: fixed; top: 10px; right: 10px; background: var(--card); border: none; font-size: 24px; cursor: pointer; z-index: 100; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
+
+  /* 入睡时间那一行强制不换行 */
+  .nowrap-row { flex-wrap: nowrap !important; }
+  .nowrap-row .time-btn { padding: 6px 8px; font-size: 14px; }
+  .nowrap-row .calc-value { font-size: 14px; padding: 2px 6px; }
+  .nowrap-row span { font-size: 14px; white-space: nowrap; }
 
   /* 滚轮选择器 */
   .picker-overlay {
@@ -172,7 +178,7 @@
   .wheel {
     width: 90px; overflow-y: auto; scroll-snap-type: y mandatory;
     -webkit-overflow-scrolling: touch; border-radius: 14px;
-    background: transparent; /* 透明，让高亮条显示 */
+    background: transparent;
     position: relative; z-index: 1;
   }
   .wheel::-webkit-scrollbar { display: none; }
@@ -191,7 +197,10 @@
 
   @media (max-width: 400px) {
     .stats { grid-template-columns: repeat(2, 1fr); }
-    .field-label { width: 70px; }
+    .field-label { width: 60px; }
+    .time-btn { padding: 5px 6px; font-size: 14px; }
+    .nowrap-row .time-btn { padding: 5px 6px; }
+    .calc-value { font-size: 13px; padding: 2px 5px; }
   }
 </style>
 </head>
@@ -248,7 +257,7 @@
 
 <script>
 // ==================== 数据库 ====================
-const DB_NAME = 'BabySleepDB7', STORE_NAME = 'records';
+const DB_NAME = 'BabySleepDB8', STORE_NAME = 'records';
 let db, currentDate = getTodayLocal(), currentData = null;
 
 function getLocalDateString(date) {
@@ -365,7 +374,7 @@ function renderNaps() {
     card.innerHTML = `
       <div class="card-header"><span class="card-title">第${idx+1}觉</span><button class="delete-btn" data-idx="${idx}">🗑️</button></div>
       <div class="field-row"><span class="field-label">清醒间隔:</span><span class="calc-value editable" data-idx="${idx}" data-action="editWindow">${wakeWin?fmtDur(wakeWin):'--'}</span></div>
-      <div class="field-row" style="flex-wrap:nowrap;">
+      <div class="field-row nowrap-row">
         <span class="field-label" style="flex-shrink:0;">入睡时间:</span>
         <button class="time-btn" data-idx="${idx}" data-action="asleep">${asleepTime}</button>
         <span style="margin:0 2px;">(</span>
@@ -377,7 +386,7 @@ function renderNaps() {
       <div class="field-row">
         <span class="field-label">结束时间:</span>
         <button class="time-btn" data-idx="${idx}" data-action="wake">${wakeTime}</button>
-        <input class="nap-sleep-note" placeholder="状态" value="${sleepNote}" data-idx="${idx}" data-action="sleepNote" style="margin-left:8px;">
+        <input class="nap-sleep-note" placeholder="状态" value="${sleepNote}" data-idx="${idx}" data-action="sleepNote" style="margin-left:6px;">
       </div>
       <div class="field-row"><span class="field-label">睡眠时长:</span><span class="calc-value">${sleepDur?fmtDur(sleepDur):'--'}</span></div>
       <div class="field-row"><span class="field-label">入睡方式:</span><select class="field-input" data-idx="${idx}" data-action="sleepMethod">${['自主','抱哄','奶睡','其他'].map(o=>`<option ${nap.sleep_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
@@ -397,7 +406,7 @@ function renderNight() {
     <div class="card night-card">
       <div class="card-header"><span class="card-title">🌙夜觉</span><span class="night-label">夜间</span></div>
       <div class="field-row"><span class="field-label">清醒间隔:</span><span class="calc-value editable" data-action="editNightWindow">${night.before_night_window?fmtDur(night.before_night_window):'--'}</span></div>
-      <div class="field-row" style="flex-wrap:nowrap;">
+      <div class="field-row nowrap-row">
         <span class="field-label">入睡时间:</span>
         <button class="time-btn" data-action="nightAsleep">${night.asleep_time||'--:--'}</button>
         <span>(</span>
@@ -440,11 +449,9 @@ function bindNightEvents() {
   document.querySelector('[data-action="nightWakeMethod"]').onchange = e => { currentData.night.wake_method=e.target.value; saveAndRender(); };
   document.querySelector('[data-action="nightNote"]').onchange = e => { currentData.night.note=e.target.value; saveAndRender(); };
   document.querySelector('[data-action="nightSleepNote"]').onchange = e => { currentData.night.sleep_note=e.target.value; saveAndRender(); };
-  // 夜觉清醒间隔双向输入
   document.querySelector('[data-action="editNightWindow"]').onclick = editNightWindow;
 }
 
-// 双向输入：小觉清醒间隔
 function editWakeWindow(idx) {
   let nap = currentData.naps[idx];
   let cur = nap.wake_window;
@@ -460,7 +467,6 @@ function editWakeWindow(idx) {
   saveAndRender();
 }
 
-// 双向输入：夜觉清醒间隔
 function editNightWindow() {
   let night = currentData.night;
   let cur = night.before_night_window;
@@ -476,7 +482,7 @@ function editNightWindow() {
   saveAndRender();
 }
 
-// ==================== 时间选择器（循环滚动） ====================
+// ==================== 时间选择器 ====================
 let currentPicker = null;
 function openTimePicker(type, napIdx) {
   let def;
@@ -510,14 +516,10 @@ function showPicker(initial) {
 function buildLoopWheel(id, min, max, selected) {
   let wheel = document.getElementById(id);
   wheel.innerHTML = '';
-  // 生成三组数据实现循环
   const data = [];
   for(let r=0; r<3; r++) {
-    for(let i=min; i<=max; i++) {
-      data.push(i);
-    }
+    for(let i=min; i<=max; i++) data.push(i);
   }
-  // 中间组的起始索引
   const middleStart = data.length/3;
   data.forEach((val, idx)=>{
     let div = document.createElement('div');
@@ -526,7 +528,6 @@ function buildLoopWheel(id, min, max, selected) {
     div.dataset.value = val;
     wheel.appendChild(div);
   });
-  // 滚动到中间组的 selected 值附近
   let targetIdx = middleStart + (selected - min);
   let targetItem = wheel.children[targetIdx];
   if(targetItem) {
