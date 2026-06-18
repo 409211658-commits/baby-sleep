@@ -29,7 +29,7 @@
     font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
     background: var(--bg);
     color: var(--text);
-    padding-bottom: 30px;
+    padding-bottom: 40px;
     transition: background 0.3s;
     max-width: 500px;
     margin: 0 auto;
@@ -151,13 +151,19 @@
   }
   .night-label { background: #3F51B5; color: white; padding: 2px 8px; border-radius: 12px; font-size: 14px; margin-left: 6px; }
   .mode-toggle { position: fixed; top: 10px; right: 10px; background: var(--card); border: none; font-size: 24px; cursor: pointer; z-index: 11; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
+  .bottom-tools {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    padding: 20px 12px;
+  }
 
   .nowrap-row { flex-wrap: nowrap !important; }
   .nowrap-row .time-btn { padding: 6px 8px; font-size: 14px; }
   .nowrap-row .calc-value { font-size: 14px; padding: 2px 6px; }
   .nowrap-row span { font-size: 14px; white-space: nowrap; }
 
-  /* 滚轮选择器 */
+  /* 时间滚轮选择器 */
   .picker-overlay {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; z-index: 200;
@@ -222,8 +228,6 @@
     <label>起床时间:</label>
     <button class="time-btn" id="wakeTimeBtn" onclick="openWakeTimePicker()">07:00</button>
     <button class="btn outline" onclick="copyYesterday()">复制昨日</button>
-    <button class="btn outline" onclick="exportData()">导出</button>
-    <button class="btn outline" onclick="importData()">导入</button>
   </div>
 </div>
 
@@ -240,6 +244,12 @@
 
 <div id="nightCardContainer" class="container"></div>
 
+<div class="bottom-tools">
+  <button class="btn outline" onclick="exportData()">导出数据</button>
+  <button class="btn outline" onclick="importData()">导入数据</button>
+</div>
+
+<!-- 时间选择器 -->
 <div id="timePickerOverlay" class="picker-overlay" style="display:none;">
   <div class="picker-container">
     <div class="picker-header">
@@ -257,11 +267,29 @@
   </div>
 </div>
 
+<!-- 时长选择器（小时+分钟） -->
+<div id="durationPickerOverlay" class="picker-overlay" style="display:none;">
+  <div class="picker-container">
+    <div class="picker-header">
+      <button onclick="cancelDurationPicker()">取消</button>
+      <span style="font-weight:600;font-size:18px;">选择时长</span>
+      <button onclick="confirmDurationPicker()">确定</button>
+    </div>
+    <div class="picker-wheels" id="durationWheels">
+      <div class="wheel-mask"></div>
+      <div class="wheel-highlight"></div>
+      <div class="wheel" id="durHourWheel"></div>
+      <div class="wheel" id="durMinuteWheel"></div>
+    </div>
+    <div class="picker-preview" id="durationPreview"></div>
+  </div>
+</div>
+
 <script>
 // ==================== 数据库 ====================
 const DB_NAME = 'BabySleepDB8', STORE_NAME = 'records';
 let db, currentDate = getTodayLocal(), currentData = null;
-let scrollPosition = 0;   // 记住滚动位置
+let scrollPosition = 0;
 
 function getLocalDateString(date) {
   const d = date instanceof Date ? date : new Date(date + 'T00:00:00');
@@ -311,6 +339,120 @@ const fmtDur = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtDurShort = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtMinOnly = m => m===null||isNaN(m)?'--':`${m}分钟`;
 
+// 时长选择器状态
+let durationCallback = null;
+
+function showDurationPicker(currentMinutes, callback) {
+  durationCallback = callback;
+  const overlay = document.getElementById('durationPickerOverlay');
+  overlay.style.display = 'flex';
+  const h = Math.floor(currentMinutes / 60);
+  const m = currentMinutes % 60;
+  buildLoopWheel('durHourWheel', 0, 12, h);
+  buildLoopWheel('durMinuteWheel', 0, 59, m, 1);
+  document.getElementById('durationPreview').textContent = '';
+}
+
+function cancelDurationPicker() {
+  document.getElementById('durationPickerOverlay').style.display = 'none';
+  durationCallback = null;
+}
+
+function confirmDurationPicker() {
+  const hWheel = document.getElementById('durHourWheel');
+  const mWheel = document.getElementById('durMinuteWheel');
+  const getVal = (wheel) => {
+    let center = wheel.scrollTop + wheel.clientHeight/2;
+    let best = null, minDist = Infinity;
+    [...wheel.children].forEach(el => {
+      let elCenter = el.offsetTop + el.offsetHeight/2;
+      let dist = Math.abs(center - elCenter);
+      if(dist < minDist) { minDist = dist; best = el; }
+    });
+    return best ? parseInt(best.dataset.value) : 0;
+  };
+  const hours = getVal(hWheel);
+  const minutes = getVal(mWheel);
+  const total = hours * 60 + minutes;
+  if (durationCallback) durationCallback(total);
+  cancelDurationPicker();
+}
+
+// 编辑清醒间隔 / 睡眠时长
+function editWakeWindow(idx) {
+  const nap = currentData.naps[idx];
+  const cur = nap.wake_window || nap.planned_wake_window || 90;
+  showDurationPicker(cur, (min) => {
+    let base = idx===0 ? currentData.wake_up_time : currentData.naps[idx-1].wake_time;
+    if(!base) return alert('缺少基准时间');
+    nap.asleep_time = toTime(toMin(base) + min);
+    nap.bed_time = toTime(toMin(base) + min - 10);
+    nap.planned_wake_window = min;
+    propagate(currentData);
+    saveAndRender();
+  });
+}
+
+function editNightWindow() {
+  const night = currentData.night;
+  const cur = night.before_night_window || night.planned_wake_window || 120;
+  showDurationPicker(cur, (min) => {
+    let base = currentData.naps.length ? currentData.naps[currentData.naps.length-1].wake_time : currentData.wake_up_time;
+    if(!base) return alert('缺少基准时间');
+    night.asleep_time = toTime(toMin(base) + min);
+    night.bed_time = toTime(toMin(base) + min - 10);
+    night.planned_wake_window = min;
+    propagate(currentData);
+    saveAndRender();
+  });
+}
+
+function editSleepDuration(idx) {
+  const nap = currentData.naps[idx];
+  if (!nap.asleep_time) return alert('请先填写入睡时间');
+  const cur = nap.sleep_duration || 60;
+  showDurationPicker(cur, (min) => {
+    nap.wake_time = toTime(toMin(nap.asleep_time) + min);
+    propagate(currentData);
+    saveAndRender();
+  });
+}
+
+function editNightDuration() {
+  const night = currentData.night;
+  if (!night.asleep_time) return alert('请先填写夜觉入睡时间');
+  const cur = night.sleep_duration || 600;
+  showDurationPicker(cur, (min) => {
+    night.wake_time = toTime(toMin(night.asleep_time) + min);
+    propagate(currentData);
+    saveAndRender();
+  });
+}
+
+// 传播计划间隔
+function propagate(rec) {
+  let naps = rec.naps;
+  for (let i = 0; i < naps.length; i++) {
+    const nap = naps[i];
+    if (nap.planned_wake_window !== undefined && nap.planned_wake_window !== null) {
+      const base = i === 0 ? rec.wake_up_time : naps[i-1].wake_time;
+      if (base && base !== '--:--') {
+        const newAsleep = toTime(toMin(base) + nap.planned_wake_window);
+        nap.asleep_time = newAsleep;
+        nap.bed_time = toTime(toMin(newAsleep) - 10);
+      }
+    }
+  }
+  if (rec.night.planned_wake_window !== undefined && rec.night.planned_wake_window !== null) {
+    const base = naps.length ? naps[naps.length-1].wake_time : rec.wake_up_time;
+    if (base && base !== '--:--') {
+      const newAsleep = toTime(toMin(base) + rec.night.planned_wake_window);
+      rec.night.asleep_time = newAsleep;
+      rec.night.bed_time = toTime(toMin(newAsleep) - 10);
+    }
+  }
+}
+
 function computeAll(rec) {
   let naps = rec.naps, wake = rec.wake_up_time, night = rec.night;
   naps.forEach((nap,i)=>{
@@ -347,7 +489,6 @@ function computeStats(rec) {
   return { awakeDur, dayTotal, nightTotal, total };
 }
 
-// ==================== 渲染 ====================
 function renderAll() {
   computeAll(currentData);
   let stats = computeStats(currentData);
@@ -391,7 +532,7 @@ function renderNaps() {
         <button class="time-btn" data-idx="${idx}" data-action="wake">${wakeTime}</button>
         <input class="nap-sleep-note" placeholder="状态" value="${sleepNote}" data-idx="${idx}" data-action="sleepNote" style="margin-left:6px;">
       </div>
-      <div class="field-row"><span class="field-label">睡眠时长:</span><span class="calc-value">${sleepDur?fmtDur(sleepDur):'--'}</span></div>
+      <div class="field-row"><span class="field-label">睡眠时长:</span><span class="calc-value editable" data-idx="${idx}" data-action="editDuration">${sleepDur?fmtDur(sleepDur):'--'}</span></div>
       <div class="field-row"><span class="field-label">入睡方式:</span><select class="field-input" data-idx="${idx}" data-action="sleepMethod">${['自主','抱哄','奶睡','其他'].map(o=>`<option ${nap.sleep_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
       <div class="field-row"><span class="field-label">醒来方式:</span><select class="field-input" data-idx="${idx}" data-action="wakeMethod">${['自己醒','叫醒','哭醒','其他'].map(o=>`<option ${nap.wake_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
       <div class="field-row"><span class="field-label">备注:</span><input class="field-input" type="text" value="${nap.note||''}" data-idx="${idx}" data-action="note" placeholder="备注"></div>
@@ -423,7 +564,7 @@ function renderNight() {
         <button class="time-btn" data-action="nightWake">${night.wake_time||'--:--'}</button>
         <input class="nap-sleep-note" placeholder="状态" value="${night.sleep_note||''}" data-action="nightSleepNote">
       </div>
-      <div class="field-row"><span class="field-label">睡眠时长:</span><span class="calc-value">${night.sleep_duration?fmtDur(night.sleep_duration):'--'}</span></div>
+      <div class="field-row"><span class="field-label">睡眠时长:</span><span class="calc-value editable" data-action="editNightDuration">${night.sleep_duration?fmtDur(night.sleep_duration):'--'}</span></div>
       <div class="field-row"><span class="field-label">入睡方式:</span><select class="field-input" data-action="nightSleepMethod">${['自主','抱哄','奶睡','其他'].map(o=>`<option ${night.sleep_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
       <div class="field-row"><span class="field-label">醒来方式:</span><select class="field-input" data-action="nightWakeMethod">${['自己醒','叫醒','哭醒','其他'].map(o=>`<option ${night.wake_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
       <div class="field-row"><span class="field-label">备注:</span><input class="field-input" type="text" value="${night.note||''}" data-action="nightNote" placeholder="备注"></div>
@@ -437,6 +578,7 @@ function bindCardEvents() {
   document.querySelectorAll('[data-idx][data-action="asleep"]').forEach(b=> b.onclick = ()=> openTimePicker('napAsleep', +b.dataset.idx));
   document.querySelectorAll('[data-idx][data-action="wake"]').forEach(b=> b.onclick = ()=> openTimePicker('napWake', +b.dataset.idx));
   document.querySelectorAll('[data-idx][data-action="editWindow"]').forEach(s=> s.onclick = ()=> editWakeWindow(+s.dataset.idx));
+  document.querySelectorAll('[data-idx][data-action="editDuration"]').forEach(s=> s.onclick = ()=> editSleepDuration(+s.dataset.idx));
   document.querySelectorAll('[data-idx][data-action="sleepMethod"]').forEach(s=> s.onchange = e => { currentData.naps[+s.dataset.idx].sleep_method=e.target.value; saveAndRender(); });
   document.querySelectorAll('[data-idx][data-action="wakeMethod"]').forEach(s=> s.onchange = e => { currentData.naps[+s.dataset.idx].wake_method=e.target.value; saveAndRender(); });
   document.querySelectorAll('[data-idx][data-action="note"]').forEach(i=> i.onchange = e => { currentData.naps[+i.dataset.idx].note=e.target.value; saveAndRender(); });
@@ -453,39 +595,10 @@ function bindNightEvents() {
   document.querySelector('[data-action="nightNote"]').onchange = e => { currentData.night.note=e.target.value; saveAndRender(); };
   document.querySelector('[data-action="nightSleepNote"]').onchange = e => { currentData.night.sleep_note=e.target.value; saveAndRender(); };
   document.querySelector('[data-action="editNightWindow"]').onclick = editNightWindow;
+  document.querySelector('[data-action="editNightDuration"]').onclick = editNightDuration;
 }
 
-function editWakeWindow(idx) {
-  let nap = currentData.naps[idx];
-  let cur = nap.wake_window;
-  let val = prompt('输入新清醒间隔（分钟）', cur||'');
-  if(val===null) return;
-  let min = parseInt(val);
-  if(isNaN(min)||min<0) return alert('无效');
-  let base = idx===0 ? currentData.wake_up_time : currentData.naps[idx-1].wake_time;
-  if(!base) return alert('缺少上一觉结束时间，无法推算');
-  let newAsleep = toTime(toMin(base) + min);
-  nap.asleep_time = newAsleep;
-  nap.bed_time = toTime(toMin(newAsleep) - 10);
-  saveAndRender();
-}
-
-function editNightWindow() {
-  let night = currentData.night;
-  let cur = night.before_night_window;
-  let val = prompt('输入夜觉清醒间隔（分钟）', cur||'');
-  if(val===null) return;
-  let min = parseInt(val);
-  if(isNaN(min)||min<0) return alert('无效');
-  let base = currentData.naps.length ? currentData.naps[currentData.naps.length-1].wake_time : currentData.wake_up_time;
-  if(!base) return alert('缺少基准时间，无法推算');
-  let newAsleep = toTime(toMin(base) + min);
-  night.asleep_time = newAsleep;
-  night.bed_time = toTime(toMin(newAsleep) - 10);
-  saveAndRender();
-}
-
-// ==================== 时间选择器 ====================
+// ==================== 时间点选择器 ====================
 let currentPicker = null;
 function openTimePicker(type, napIdx) {
   let def;
@@ -503,7 +616,21 @@ function openTimePicker(type, napIdx) {
     let now = new Date();
     def = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   }
-  currentPicker = { type, napIdx, def, onChange: val => { if(type==='wake') currentData.wake_up_time=val; else if(type.startsWith('nap')) { let nap=currentData.naps[napIdx]; if(type==='napBed') nap.bed_time=val; else if(type==='napAsleep') nap.asleep_time=val; else nap.wake_time=val; } else if(type.startsWith('night')) { if(type==='nightBed') currentData.night.bed_time=val; else if(type==='nightAsleep') currentData.night.asleep_time=val; else currentData.night.wake_time=val; } saveAndRender(); } };
+  currentPicker = { type, napIdx, def, onChange: val => {
+    if(type==='wake') currentData.wake_up_time = val;
+    else if(type.startsWith('nap')) {
+      let nap = currentData.naps[napIdx];
+      if(type==='napBed') nap.bed_time = val;
+      else if(type==='napAsleep') nap.asleep_time = val;
+      else if(type==='napWake') nap.wake_time = val;
+    } else if(type.startsWith('night')) {
+      if(type==='nightBed') currentData.night.bed_time = val;
+      else if(type==='nightAsleep') currentData.night.asleep_time = val;
+      else if(type==='nightWake') currentData.night.wake_time = val;
+    }
+    propagate(currentData);
+    saveAndRender();
+  }};
   showPicker(def);
 }
 
@@ -512,16 +639,16 @@ function showPicker(initial) {
   overlay.style.display = 'flex';
   let [h,m] = initial.split(':').map(Number);
   buildLoopWheel('hourWheel', 0, 23, h);
-  buildLoopWheel('minuteWheel', 0, 59, m);
+  buildLoopWheel('minuteWheel', 0, 59, m, 1);
   updatePickerPreview();
 }
 
-function buildLoopWheel(id, min, max, selected) {
+function buildLoopWheel(id, min, max, selected, step=1) {
   let wheel = document.getElementById(id);
   wheel.innerHTML = '';
   const data = [];
   for(let r=0; r<3; r++) {
-    for(let i=min; i<=max; i++) data.push(i);
+    for(let i=min; i<=max; i+=step) data.push(i);
   }
   const middleStart = data.length/3;
   data.forEach((val, idx)=>{
@@ -531,7 +658,7 @@ function buildLoopWheel(id, min, max, selected) {
     div.dataset.value = val;
     wheel.appendChild(div);
   });
-  let targetIdx = middleStart + (selected - min);
+  let targetIdx = middleStart + (selected - min) / step;
   let targetItem = wheel.children[targetIdx];
   if(targetItem) {
     wheel.scrollTop = targetItem.offsetTop - wheel.clientHeight/2 + targetItem.offsetHeight/2;
@@ -607,7 +734,6 @@ function cancelPicker() {
 }
 function openWakeTimePicker() { openTimePicker('wake'); }
 
-// ==================== 增删改 ====================
 function addNap() {
   currentData.naps.push({ bed_time:'', asleep_time:'', wake_time:'', sleep_method:'自主', wake_method:'自己醒', note:'', sleep_note:'' });
   saveAndRender();
@@ -615,6 +741,7 @@ function addNap() {
 function deleteNap(idx) {
   if(!confirm('删除第'+(idx+1)+'觉？')) return;
   currentData.naps.splice(idx,1);
+  propagate(currentData);
   saveAndRender();
 }
 function saveAndRender() {
@@ -623,13 +750,11 @@ function saveAndRender() {
   renderAll();
 }
 
-// ==================== 日期切换（保持滚动位置） ====================
 async function changeDate(delta) {
-  scrollPosition = window.scrollY;  // 记住当前位置
+  scrollPosition = window.scrollY;
   currentDate = shiftDate(currentDate, delta);
   await loadCurrentDate();
 }
-
 async function loadCurrentDate() {
   let rec = await loadRecord(currentDate);
   if(!rec) {
@@ -641,14 +766,10 @@ async function loadCurrentDate() {
     await saveRecord(rec);
   }
   currentData = rec;
+  propagate(currentData);
   renderAll();
-
-  // 恢复滚动位置
-  requestAnimationFrame(() => {
-    window.scrollTo(0, scrollPosition);
-  });
+  requestAnimationFrame(() => { window.scrollTo(0, scrollPosition); });
 }
-
 async function copyYesterday() {
   let yesterday = shiftDate(currentDate, -1);
   let rec = await loadRecord(yesterday);
@@ -656,7 +777,10 @@ async function copyYesterday() {
   if(!confirm(`复制昨天 (${yesterday}) 的所有记录到今天？今日数据将被覆盖。`)) return;
   let copy = JSON.parse(JSON.stringify(rec));
   copy.date = currentDate;
+  copy.naps.forEach(n => { n.note = ''; n.sleep_note = ''; });
+  copy.night.note = ''; copy.night.sleep_note = '';
   currentData = copy;
+  propagate(currentData);
   await saveRecord(currentData);
   renderAll();
 }
