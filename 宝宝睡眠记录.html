@@ -338,7 +338,7 @@ const fmtDur = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtDurShort = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtMinOnly = m => m===null||isNaN(m)?'--':`${m}分钟`;
 
-// 传播计划间隔，自动计算入睡和放床时间
+// 传播计划间隔（自动设置入睡和放床时间，尊重手动放床标记）
 function propagate(rec) {
   let naps = rec.naps;
   for (let i = 0; i < naps.length; i++) {
@@ -348,7 +348,9 @@ function propagate(rec) {
       if (base && base !== '--:--') {
         const newAsleep = toTime(toMin(base) + nap.planned_wake_window);
         nap.asleep_time = newAsleep;
-        nap.bed_time = toTime(toMin(newAsleep) - 10);
+        if (!nap.bed_manual) {
+          nap.bed_time = toTime(toMin(newAsleep) - 10);
+        }
       }
     }
   }
@@ -357,19 +359,26 @@ function propagate(rec) {
     if (base && base !== '--:--') {
       const newAsleep = toTime(toMin(base) + rec.night.planned_wake_window);
       rec.night.asleep_time = newAsleep;
-      rec.night.bed_time = toTime(toMin(newAsleep) - 10);
+      if (!rec.night.bed_manual) {
+        rec.night.bed_time = toTime(toMin(newAsleep) - 10);
+      }
     }
   }
 }
 
+// 计算所有字段
 function computeAll(rec) {
   let naps = rec.naps, wake = rec.wake_up_time, night = rec.night;
   naps.forEach((nap,i)=>{
     nap.sleep_duration = duration(nap.asleep_time, nap.wake_time);
     nap.wake_window = i===0 ? duration(wake, nap.asleep_time) : duration(naps[i-1].wake_time, nap.asleep_time);
+    const bedBase = i===0 ? wake : naps[i-1].wake_time;
+    nap.bed_interval = duration(bedBase, nap.bed_time);
   });
   night.sleep_duration = duration(night.asleep_time, night.wake_time);
   night.before_night_window = naps.length ? duration(naps[naps.length-1].wake_time, night.asleep_time) : duration(wake, night.asleep_time);
+  const nightBedBase = naps.length ? naps[naps.length-1].wake_time : wake;
+  night.bed_interval = duration(nightBedBase, night.bed_time);
 }
 
 function computeStats(rec) {
@@ -419,6 +428,7 @@ function renderNaps() {
   currentData.naps.forEach((nap,idx)=>{
     let card = document.createElement('div'); card.className='card';
     let wakeWin = nap.wake_window;
+    let bedInterval = nap.bed_interval;
     let sleepDur = nap.sleep_duration;
     let bedTime = nap.bed_time || '--:--';
     let asleepTime = nap.asleep_time || '--:--';
@@ -427,7 +437,11 @@ function renderNaps() {
     let betweenMin = (bedTime!=='--:--' && asleepTime!=='--:--') ? duration(bedTime, asleepTime) : null;
     card.innerHTML = `
       <div class="card-header"><span class="card-title">第${idx+1}觉</span><button class="delete-btn" data-idx="${idx}">🗑️</button></div>
-      <div class="field-row"><span class="field-label">清醒间隔:</span><span class="calc-value editable" data-idx="${idx}" data-action="editWindow">${wakeWin?fmtDur(wakeWin):'--'}</span></div>
+      <div class="field-row">
+        <span class="field-label">清醒间隔:</span>
+        <span class="calc-value editable" data-idx="${idx}" data-action="editWindow">${wakeWin?fmtDur(wakeWin):'--'}</span>
+        <span style="font-size:13px;color:var(--label);margin-left:4px;">(${bedInterval?fmtDur(bedInterval):'--'} 放床间隔)</span>
+      </div>
       <div class="field-row nowrap-row">
         <span class="field-label" style="flex-shrink:0;">入睡时间:</span>
         <button class="time-btn" data-idx="${idx}" data-action="asleep">${asleepTime}</button>
@@ -455,11 +469,16 @@ function renderNaps() {
 function renderNight() {
   let container = document.getElementById('nightCardContainer');
   let night = currentData.night;
+  let bedInterval = night.bed_interval;
   let betweenMin = (night.bed_time && night.asleep_time) ? duration(night.bed_time, night.asleep_time) : null;
   container.innerHTML = `
     <div class="card night-card">
       <div class="card-header"><span class="card-title">🌙夜觉</span><span class="night-label">夜间</span></div>
-      <div class="field-row"><span class="field-label">清醒间隔:</span><span class="calc-value editable" data-action="editNightWindow">${night.before_night_window?fmtDur(night.before_night_window):'--'}</span></div>
+      <div class="field-row">
+        <span class="field-label">清醒间隔:</span>
+        <span class="calc-value editable" data-action="editNightWindow">${night.before_night_window?fmtDur(night.before_night_window):'--'}</span>
+        <span style="font-size:13px;color:var(--label);margin-left:4px;">(${bedInterval?fmtDur(bedInterval):'--'} 放床间隔)</span>
+      </div>
       <div class="field-row nowrap-row">
         <span class="field-label">入睡时间:</span>
         <button class="time-btn" data-action="nightAsleep">${night.asleep_time||'--:--'}</button>
@@ -550,12 +569,19 @@ function confirmDurationPicker() {
 function editWakeWindow(idx) {
   const nap = currentData.naps[idx];
   const cur = nap.wake_window || nap.planned_wake_window || 90;
-  showDurationPicker(cur, (min) => {
+  showDurationPicker(cur, (newWindowMin) => {
     let base = idx===0 ? currentData.wake_up_time : currentData.naps[idx-1].wake_time;
     if(!base) return alert('缺少基准时间');
-    nap.asleep_time = toTime(toMin(base) + min);
-    nap.bed_time = toTime(toMin(base) + min - 10);
-    nap.planned_wake_window = min;
+    const newAsleep = toTime(toMin(base) + newWindowMin);
+    const oldDuration = duration(nap.asleep_time, nap.wake_time); // 如果结束时间存在，获取原睡眠时长
+    nap.asleep_time = newAsleep;
+    // 如果结束时间已存在，保持睡眠时长不变，调整结束时间
+    if (nap.wake_time && oldDuration !== null) {
+      nap.wake_time = toTime(toMin(newAsleep) + oldDuration);
+    }
+    nap.bed_time = toTime(toMin(newAsleep) - 10);
+    nap.planned_wake_window = newWindowMin;
+    nap.bed_manual = false;
     propagate(currentData);
     saveAndRender();
   });
@@ -564,12 +590,18 @@ function editWakeWindow(idx) {
 function editNightWindow() {
   const night = currentData.night;
   const cur = night.before_night_window || night.planned_wake_window || 120;
-  showDurationPicker(cur, (min) => {
+  showDurationPicker(cur, (newWindowMin) => {
     let base = currentData.naps.length ? currentData.naps[currentData.naps.length-1].wake_time : currentData.wake_up_time;
     if(!base) return alert('缺少基准时间');
-    night.asleep_time = toTime(toMin(base) + min);
-    night.bed_time = toTime(toMin(base) + min - 10);
-    night.planned_wake_window = min;
+    const newAsleep = toTime(toMin(base) + newWindowMin);
+    const oldDuration = duration(night.asleep_time, night.wake_time);
+    night.asleep_time = newAsleep;
+    if (night.wake_time && oldDuration !== null) {
+      night.wake_time = toTime(toMin(newAsleep) + oldDuration);
+    }
+    night.bed_time = toTime(toMin(newAsleep) - 10);
+    night.planned_wake_window = newWindowMin;
+    night.bed_manual = false;
     propagate(currentData);
     saveAndRender();
   });
@@ -623,11 +655,13 @@ function openTimePicker(type, napIdx) {
       let nap = currentData.naps[napIdx];
       if(type==='napBed') {
         nap.bed_time = val;
+        nap.bed_manual = true;
         delete nap.planned_wake_window;
       } else if(type==='napAsleep') {
         nap.asleep_time = val;
-        // 自动设置放床时间为入睡时间-10分钟
-        nap.bed_time = toTime(toMin(val) - 10);
+        if (!nap.bed_manual) {
+          nap.bed_time = toTime(toMin(val) - 10);
+        }
         delete nap.planned_wake_window;
       } else if(type==='napWake') {
         nap.wake_time = val;
@@ -635,10 +669,13 @@ function openTimePicker(type, napIdx) {
     } else if(type.startsWith('night')) {
       if(type==='nightBed') {
         currentData.night.bed_time = val;
+        currentData.night.bed_manual = true;
         delete currentData.night.planned_wake_window;
       } else if(type==='nightAsleep') {
         currentData.night.asleep_time = val;
-        currentData.night.bed_time = toTime(toMin(val) - 10);
+        if (!currentData.night.bed_manual) {
+          currentData.night.bed_time = toTime(toMin(val) - 10);
+        }
         delete currentData.night.planned_wake_window;
       } else if(type==='nightWake') {
         currentData.night.wake_time = val;
@@ -786,7 +823,6 @@ async function loadCurrentDate() {
   renderAll();
   requestAnimationFrame(() => { window.scrollTo(0, scrollPosition); });
 }
-// 复制昨日：只复制清醒间隔、入睡方式等，不复制具体时间，以便根据今日起床时间重新计算
 async function copyYesterday() {
   let yesterday = shiftDate(currentDate, -1);
   let rec = await loadRecord(yesterday);
@@ -794,23 +830,22 @@ async function copyYesterday() {
   if(!confirm(`复制昨天 (${yesterday}) 的所有记录到今天？今日数据将被覆盖。`)) return;
   let copy = JSON.parse(JSON.stringify(rec));
   copy.date = currentDate;
-  // 清除备注
   copy.naps.forEach(n => { n.note = ''; n.sleep_note = ''; });
   copy.night.note = ''; copy.night.sleep_note = '';
-  // 提取昨天的清醒间隔作为计划间隔，同时清除具体时间点
   copy.naps.forEach((nap, i) => {
     nap.planned_wake_window = nap.wake_window || null;
     nap.bed_time = '';
     nap.asleep_time = '';
     nap.wake_time = '';
     delete nap.sleep_duration;
+    delete nap.bed_manual;
   });
   copy.night.planned_wake_window = copy.night.before_night_window || null;
   copy.night.bed_time = '';
   copy.night.asleep_time = '';
   copy.night.wake_time = '';
   delete copy.night.sleep_duration;
-  // 起床时间保留昨天的，但用户可以修改，修改后会触发propagate
+  delete copy.night.bed_manual;
   currentData = copy;
   propagate(currentData);
   await saveRecord(currentData);
