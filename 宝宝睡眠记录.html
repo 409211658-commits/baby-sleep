@@ -287,8 +287,17 @@
 <script>
 // ==================== 数据库 ====================
 const DB_NAME = 'BabySleepDB8', STORE_NAME = 'records';
-let db, currentDate = getTodayLocal(), currentData = null;
+let db, currentDate, currentData = null;
 let scrollPosition = 0;
+
+// 从 localStorage 读取上次访问的日期，如果没有则用今天
+function getInitialDate() {
+  const saved = localStorage.getItem('lastViewedDate');
+  if (saved) return saved;
+  return getTodayLocal();
+}
+
+currentDate = getInitialDate();
 
 function getLocalDateString(date) {
   const d = date instanceof Date ? date : new Date(date + 'T00:00:00');
@@ -338,7 +347,21 @@ const fmtDur = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtDurShort = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtMinOnly = m => m===null||isNaN(m)?'--':`${m}分钟`;
 
-// 传播计划间隔（自动设置入睡和放床时间，尊重手动放床标记）
+// 自动设置下一天的起床时间
+async function setNextDayWakeUp(todayDate, wakeTime, asleepTime) {
+  if (!wakeTime) return;
+  const nextDate = shiftDate(todayDate, 1);
+  let nextRecord = await loadRecord(nextDate);
+  if (!nextRecord) {
+    nextRecord = createEmptyRecord(nextDate);
+  }
+  if (!nextRecord.wake_up_time || nextRecord.wake_up_time === '07:00') {
+    nextRecord.wake_up_time = wakeTime;
+    await saveRecord(nextRecord);
+  }
+}
+
+// 传播计划间隔
 function propagate(rec) {
   let naps = rec.naps;
   for (let i = 0; i < naps.length; i++) {
@@ -366,7 +389,6 @@ function propagate(rec) {
   }
 }
 
-// 计算所有字段
 function computeAll(rec) {
   let naps = rec.naps, wake = rec.wake_up_time, night = rec.night;
   naps.forEach((nap,i)=>{
@@ -573,9 +595,8 @@ function editWakeWindow(idx) {
     let base = idx===0 ? currentData.wake_up_time : currentData.naps[idx-1].wake_time;
     if(!base) return alert('缺少基准时间');
     const newAsleep = toTime(toMin(base) + newWindowMin);
-    const oldDuration = duration(nap.asleep_time, nap.wake_time); // 如果结束时间存在，获取原睡眠时长
+    const oldDuration = duration(nap.asleep_time, nap.wake_time);
     nap.asleep_time = newAsleep;
-    // 如果结束时间已存在，保持睡眠时长不变，调整结束时间
     if (nap.wake_time && oldDuration !== null) {
       nap.wake_time = toTime(toMin(newAsleep) + oldDuration);
     }
@@ -647,7 +668,7 @@ function openTimePicker(type, napIdx) {
     let now = new Date();
     def = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   }
-  currentPicker = { type, napIdx, def, onChange: val => {
+  currentPicker = { type, napIdx, def, onChange: async (val) => {
     if(type==='wake') {
       currentData.wake_up_time = val;
       propagate(currentData);
@@ -679,6 +700,8 @@ function openTimePicker(type, napIdx) {
         delete currentData.night.planned_wake_window;
       } else if(type==='nightWake') {
         currentData.night.wake_time = val;
+        // 自动设置下一天起床时间
+        await setNextDayWakeUp(currentData.date, val, currentData.night.asleep_time);
       }
     }
     propagate(currentData);
@@ -806,6 +829,7 @@ function saveAndRender() {
 async function changeDate(delta) {
   scrollPosition = window.scrollY;
   currentDate = shiftDate(currentDate, delta);
+  localStorage.setItem('lastViewedDate', currentDate);
   await loadCurrentDate();
 }
 async function loadCurrentDate() {
@@ -832,6 +856,12 @@ async function copyYesterday() {
   copy.date = currentDate;
   copy.naps.forEach(n => { n.note = ''; n.sleep_note = ''; });
   copy.night.note = ''; copy.night.sleep_note = '';
+
+  // 设置起床时间：优先用昨天的夜觉结束时间，否则用昨天的起床时间
+  if (copy.night && copy.night.wake_time) {
+    copy.wake_up_time = copy.night.wake_time;
+  }
+  // 保留清醒间隔，清空时间点
   copy.naps.forEach((nap, i) => {
     nap.planned_wake_window = nap.wake_window || null;
     nap.bed_time = '';
