@@ -55,6 +55,8 @@
   .wake-row label { font-size: 16px; color: var(--label); }
   .btn { background: var(--primary); color: white; border: none; padding: 10px 16px; border-radius: 10px; font-size: 15px; cursor: pointer; font-weight: 500; }
   .btn.outline { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+  .btn.warn { background: var(--danger); color: white; }
+  .btn.warn.outline { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
   .stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -105,6 +107,16 @@
     white-space: nowrap;
   }
   .time-btn:active { opacity: 0.7; }
+  .time-btn:disabled,
+  .disabled .time-btn,
+  .disabled .calc-value.editable,
+  .disabled .field-input,
+  .disabled .nap-sleep-note {
+    opacity: 0.5;
+    pointer-events: none;
+    cursor: not-allowed;
+  }
+  .disabled .delete-btn { pointer-events: none; opacity: 0.3; }
   .nap-sleep-note {
     padding: 6px 8px;
     border: 1px solid #ddd;
@@ -225,8 +237,9 @@
   </div>
   <div class="wake-row">
     <label>起床时间:</label>
-    <button class="time-btn" id="wakeTimeBtn" onclick="openWakeTimePicker()">07:00</button>
-    <button class="btn outline" onclick="copyYesterday()">复制昨日</button>
+    <button class="time-btn" id="wakeTimeBtn" onclick="if(!locked)openWakeTimePicker()">07:00</button>
+    <button class="btn outline" onclick="copyYesterday()" id="copyBtn">复制昨日</button>
+    <button class="btn warn outline" id="lockToggleBtn" onclick="toggleLock()" style="display:none;">🔒 解锁编辑</button>
   </div>
 </div>
 
@@ -237,11 +250,11 @@
   <div class="stat-item"><div class="stat-label">总睡眠</div><div class="stat-value" id="statTotalSleep">--</div></div>
 </div>
 
-<div class="container" id="napsContainer"></div>
-
-<button class="add-nap-btn" onclick="addNap()">+ 添加小觉</button>
-
-<div id="nightCardContainer" class="container"></div>
+<div class="container" id="mainContent">
+  <div id="napsContainer"></div>
+  <button class="add-nap-btn" id="addNapBtn" onclick="addNap()">+ 添加小觉</button>
+  <div id="nightCardContainer"></div>
+</div>
 
 <div class="bottom-tools">
   <button class="btn outline" onclick="exportData()">导出数据</button>
@@ -289,8 +302,8 @@
 const DB_NAME = 'BabySleepDB8', STORE_NAME = 'records';
 let db, currentDate, currentData = null;
 let scrollPosition = 0;
+let locked = false; // 锁定状态
 
-// 从 localStorage 读取上次访问的日期，如果没有则用今天
 function getInitialDate() {
   const saved = localStorage.getItem('lastViewedDate');
   if (saved) return saved;
@@ -347,8 +360,54 @@ const fmtDur = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtDurShort = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtMinOnly = m => m===null||isNaN(m)?'--':`${m}分钟`;
 
+// 锁定控制
+function isLocked() {
+  return locked;
+}
+
+function toggleLock() {
+  locked = !locked;
+  updateLockUI();
+}
+
+function updateLockUI() {
+  const main = document.getElementById('mainContent');
+  const lockBtn = document.getElementById('lockToggleBtn');
+  const wakeBtn = document.getElementById('wakeTimeBtn');
+  const copyBtn = document.getElementById('copyBtn');
+
+  if (locked) {
+    main.classList.add('disabled');
+    lockBtn.textContent = '🔓 锁定编辑';
+    lockBtn.classList.remove('warn', 'outline');
+    lockBtn.classList.add('btn');
+    wakeBtn.disabled = true;
+    if (copyBtn) copyBtn.style.display = 'none';
+  } else {
+    main.classList.remove('disabled');
+    lockBtn.textContent = '🔒 解锁编辑';
+    lockBtn.classList.add('warn', 'outline');
+    lockBtn.classList.remove('btn');
+    wakeBtn.disabled = false;
+    if (copyBtn) copyBtn.style.display = '';
+  }
+}
+
+// 自动锁定：昨天及以前自动锁定，今天解锁
+function autoLock() {
+  const today = getTodayLocal();
+  const showLockBtn = currentDate < today;
+  document.getElementById('lockToggleBtn').style.display = showLockBtn ? '' : 'none';
+  if (showLockBtn) {
+    locked = true;
+  } else {
+    locked = false;
+  }
+  updateLockUI();
+}
+
 // 自动设置下一天的起床时间
-async function setNextDayWakeUp(todayDate, wakeTime, asleepTime) {
+async function setNextDayWakeUp(todayDate, wakeTime) {
   if (!wakeTime) return;
   const nextDate = shiftDate(todayDate, 1);
   let nextRecord = await loadRecord(nextDate);
@@ -479,7 +538,7 @@ function renderNaps() {
         <input class="nap-sleep-note" placeholder="状态" value="${sleepNote}" data-idx="${idx}" data-action="sleepNote" style="margin-left:6px;">
       </div>
       <div class="field-row"><span class="field-label">睡眠时长:</span><span class="calc-value editable" data-idx="${idx}" data-action="editDuration">${sleepDur?fmtDur(sleepDur):'--'}</span></div>
-      <div class="field-row"><span class="field-label">入睡方式:</span><select class="field-input" data-idx="${idx}" data-action="sleepMethod">${['自主','抱哄','奶睡','其他'].map(o=>`<option ${nap.sleep_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
+      <div class="field-row"><span class="field-label">入睡方式:</span><select class="field-input" data-idx="${idx}" data-action="sleepMethod">${['自主','抱哄','拍睡','奶睡','其他'].map(o=>`<option ${nap.sleep_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
       <div class="field-row"><span class="field-label">醒来方式:</span><select class="field-input" data-idx="${idx}" data-action="wakeMethod">${['自己醒','叫醒','哭醒','其他'].map(o=>`<option ${nap.wake_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
       <div class="field-row"><span class="field-label">备注:</span><input class="field-input" type="text" value="${nap.note||''}" data-idx="${idx}" data-action="note" placeholder="备注"></div>
     `;
@@ -516,7 +575,7 @@ function renderNight() {
         <input class="nap-sleep-note" placeholder="状态" value="${night.sleep_note||''}" data-action="nightSleepNote">
       </div>
       <div class="field-row"><span class="field-label">睡眠时长:</span><span class="calc-value editable" data-action="editNightDuration">${night.sleep_duration?fmtDur(night.sleep_duration):'--'}</span></div>
-      <div class="field-row"><span class="field-label">入睡方式:</span><select class="field-input" data-action="nightSleepMethod">${['自主','抱哄','奶睡','其他'].map(o=>`<option ${night.sleep_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
+      <div class="field-row"><span class="field-label">入睡方式:</span><select class="field-input" data-action="nightSleepMethod">${['自主','抱哄','拍睡','奶睡','其他'].map(o=>`<option ${night.sleep_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
       <div class="field-row"><span class="field-label">醒来方式:</span><select class="field-input" data-action="nightWakeMethod">${['自己醒','叫醒','哭醒','其他'].map(o=>`<option ${night.wake_method===o?'selected':''}>${o}</option>`).join('')}</select></div>
       <div class="field-row"><span class="field-label">备注:</span><input class="field-input" type="text" value="${night.note||''}" data-action="nightNote" placeholder="备注"></div>
     </div>
@@ -525,28 +584,28 @@ function renderNight() {
 }
 
 function bindCardEvents() {
-  document.querySelectorAll('[data-idx][data-action="bed"]').forEach(b=> b.onclick = ()=> openTimePicker('napBed', +b.dataset.idx));
-  document.querySelectorAll('[data-idx][data-action="asleep"]').forEach(b=> b.onclick = ()=> openTimePicker('napAsleep', +b.dataset.idx));
-  document.querySelectorAll('[data-idx][data-action="wake"]').forEach(b=> b.onclick = ()=> openTimePicker('napWake', +b.dataset.idx));
-  document.querySelectorAll('[data-idx][data-action="editWindow"]').forEach(s=> s.onclick = ()=> editWakeWindow(+s.dataset.idx));
-  document.querySelectorAll('[data-idx][data-action="editDuration"]').forEach(s=> s.onclick = ()=> editSleepDuration(+s.dataset.idx));
-  document.querySelectorAll('[data-idx][data-action="sleepMethod"]').forEach(s=> s.onchange = e => { currentData.naps[+s.dataset.idx].sleep_method=e.target.value; saveAndRender(); });
-  document.querySelectorAll('[data-idx][data-action="wakeMethod"]').forEach(s=> s.onchange = e => { currentData.naps[+s.dataset.idx].wake_method=e.target.value; saveAndRender(); });
-  document.querySelectorAll('[data-idx][data-action="note"]').forEach(i=> i.onchange = e => { currentData.naps[+i.dataset.idx].note=e.target.value; saveAndRender(); });
-  document.querySelectorAll('[data-idx][data-action="sleepNote"]').forEach(i=> i.onchange = e => { currentData.naps[+i.dataset.idx].sleep_note=e.target.value; saveAndRender(); });
-  document.querySelectorAll('.delete-btn').forEach(b=> b.onclick = ()=> deleteNap(+b.dataset.idx));
+  document.querySelectorAll('[data-idx][data-action="bed"]').forEach(b=> b.onclick = ()=> { if(!isLocked()) openTimePicker('napBed', +b.dataset.idx); });
+  document.querySelectorAll('[data-idx][data-action="asleep"]').forEach(b=> b.onclick = ()=> { if(!isLocked()) openTimePicker('napAsleep', +b.dataset.idx); });
+  document.querySelectorAll('[data-idx][data-action="wake"]').forEach(b=> b.onclick = ()=> { if(!isLocked()) openTimePicker('napWake', +b.dataset.idx); });
+  document.querySelectorAll('[data-idx][data-action="editWindow"]').forEach(s=> s.onclick = ()=> { if(!isLocked()) editWakeWindow(+s.dataset.idx); });
+  document.querySelectorAll('[data-idx][data-action="editDuration"]').forEach(s=> s.onclick = ()=> { if(!isLocked()) editSleepDuration(+s.dataset.idx); });
+  document.querySelectorAll('[data-idx][data-action="sleepMethod"]').forEach(s=> s.onchange = e => { if(!isLocked()){ currentData.naps[+s.dataset.idx].sleep_method=e.target.value; saveAndRender(); } });
+  document.querySelectorAll('[data-idx][data-action="wakeMethod"]').forEach(s=> s.onchange = e => { if(!isLocked()){ currentData.naps[+s.dataset.idx].wake_method=e.target.value; saveAndRender(); } });
+  document.querySelectorAll('[data-idx][data-action="note"]').forEach(i=> i.onchange = e => { if(!isLocked()){ currentData.naps[+i.dataset.idx].note=e.target.value; saveAndRender(); } });
+  document.querySelectorAll('[data-idx][data-action="sleepNote"]').forEach(i=> i.onchange = e => { if(!isLocked()){ currentData.naps[+i.dataset.idx].sleep_note=e.target.value; saveAndRender(); } });
+  document.querySelectorAll('.delete-btn').forEach(b=> b.onclick = ()=> { if(!isLocked()) deleteNap(+b.dataset.idx); });
 }
 
 function bindNightEvents() {
-  document.querySelector('[data-action="nightBed"]').onclick = ()=> openTimePicker('nightBed');
-  document.querySelector('[data-action="nightAsleep"]').onclick = ()=> openTimePicker('nightAsleep');
-  document.querySelector('[data-action="nightWake"]').onclick = ()=> openTimePicker('nightWake');
-  document.querySelector('[data-action="nightSleepMethod"]').onchange = e => { currentData.night.sleep_method=e.target.value; saveAndRender(); };
-  document.querySelector('[data-action="nightWakeMethod"]').onchange = e => { currentData.night.wake_method=e.target.value; saveAndRender(); };
-  document.querySelector('[data-action="nightNote"]').onchange = e => { currentData.night.note=e.target.value; saveAndRender(); };
-  document.querySelector('[data-action="nightSleepNote"]').onchange = e => { currentData.night.sleep_note=e.target.value; saveAndRender(); };
-  document.querySelector('[data-action="editNightWindow"]').onclick = editNightWindow;
-  document.querySelector('[data-action="editNightDuration"]').onclick = editNightDuration;
+  document.querySelector('[data-action="nightBed"]').onclick = ()=> { if(!isLocked()) openTimePicker('nightBed'); };
+  document.querySelector('[data-action="nightAsleep"]').onclick = ()=> { if(!isLocked()) openTimePicker('nightAsleep'); };
+  document.querySelector('[data-action="nightWake"]').onclick = ()=> { if(!isLocked()) openTimePicker('nightWake'); };
+  document.querySelector('[data-action="nightSleepMethod"]').onchange = e => { if(!isLocked()){ currentData.night.sleep_method=e.target.value; saveAndRender(); } };
+  document.querySelector('[data-action="nightWakeMethod"]').onchange = e => { if(!isLocked()){ currentData.night.wake_method=e.target.value; saveAndRender(); } };
+  document.querySelector('[data-action="nightNote"]').onchange = e => { if(!isLocked()){ currentData.night.note=e.target.value; saveAndRender(); } };
+  document.querySelector('[data-action="nightSleepNote"]').onchange = e => { if(!isLocked()){ currentData.night.sleep_note=e.target.value; saveAndRender(); } };
+  document.querySelector('[data-action="editNightWindow"]').onclick = ()=> { if(!isLocked()) editNightWindow(); };
+  document.querySelector('[data-action="editNightDuration"]').onclick = ()=> { if(!isLocked()) editNightDuration(); };
 }
 
 // ==================== 时长选择器 ====================
@@ -600,9 +659,12 @@ function editWakeWindow(idx) {
     if (nap.wake_time && oldDuration !== null) {
       nap.wake_time = toTime(toMin(newAsleep) + oldDuration);
     }
-    nap.bed_time = toTime(toMin(newAsleep) - 10);
+    // 只有非手动放床才自动设置
+    if (!nap.bed_manual) {
+      nap.bed_time = toTime(toMin(newAsleep) - 10);
+    }
     nap.planned_wake_window = newWindowMin;
-    nap.bed_manual = false;
+    nap.bed_manual = nap.bed_manual || false;
     propagate(currentData);
     saveAndRender();
   });
@@ -620,9 +682,11 @@ function editNightWindow() {
     if (night.wake_time && oldDuration !== null) {
       night.wake_time = toTime(toMin(newAsleep) + oldDuration);
     }
-    night.bed_time = toTime(toMin(newAsleep) - 10);
+    if (!night.bed_manual) {
+      night.bed_time = toTime(toMin(newAsleep) - 10);
+    }
     night.planned_wake_window = newWindowMin;
-    night.bed_manual = false;
+    night.bed_manual = night.bed_manual || false;
     propagate(currentData);
     saveAndRender();
   });
@@ -653,6 +717,7 @@ function editNightDuration() {
 // ==================== 时间点选择器 ====================
 let currentPicker = null;
 function openTimePicker(type, napIdx) {
+  if (isLocked()) return;
   let def;
   if(type.startsWith('nap')) {
     let nap = currentData.naps[napIdx];
@@ -700,8 +765,7 @@ function openTimePicker(type, napIdx) {
         delete currentData.night.planned_wake_window;
       } else if(type==='nightWake') {
         currentData.night.wake_time = val;
-        // 自动设置下一天起床时间
-        await setNextDayWakeUp(currentData.date, val, currentData.night.asleep_time);
+        await setNextDayWakeUp(currentData.date, val);
       }
     }
     propagate(currentData);
@@ -808,13 +872,15 @@ function cancelPicker() {
   document.getElementById('timePickerOverlay').style.display = 'none';
   currentPicker = null;
 }
-function openWakeTimePicker() { openTimePicker('wake'); }
+function openWakeTimePicker() { if(!isLocked()) openTimePicker('wake'); }
 
 function addNap() {
+  if (isLocked()) return;
   currentData.naps.push({ bed_time:'', asleep_time:'', wake_time:'', sleep_method:'自主', wake_method:'自己醒', note:'', sleep_note:'' });
   saveAndRender();
 }
 function deleteNap(idx) {
+  if (isLocked()) return;
   if(!confirm('删除第'+(idx+1)+'觉？')) return;
   currentData.naps.splice(idx,1);
   propagate(currentData);
@@ -830,6 +896,7 @@ async function changeDate(delta) {
   scrollPosition = window.scrollY;
   currentDate = shiftDate(currentDate, delta);
   localStorage.setItem('lastViewedDate', currentDate);
+  autoLock();
   await loadCurrentDate();
 }
 async function loadCurrentDate() {
@@ -857,11 +924,9 @@ async function copyYesterday() {
   copy.naps.forEach(n => { n.note = ''; n.sleep_note = ''; });
   copy.night.note = ''; copy.night.sleep_note = '';
 
-  // 设置起床时间：优先用昨天的夜觉结束时间，否则用昨天的起床时间
   if (copy.night && copy.night.wake_time) {
     copy.wake_up_time = copy.night.wake_time;
   }
-  // 保留清醒间隔，清空时间点
   copy.naps.forEach((nap, i) => {
     nap.planned_wake_window = nap.wake_window || null;
     nap.bed_time = '';
@@ -922,6 +987,7 @@ setInterval(()=>{
 (async ()=>{
   await openDB();
   if(localStorage.getItem('darkMode')==='true') document.body.classList.add('dark');
+  autoLock();
   await loadCurrentDate();
 })();
 </script>
