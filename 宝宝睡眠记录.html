@@ -302,7 +302,7 @@
 const DB_NAME = 'BabySleepDB8', STORE_NAME = 'records';
 let db, currentDate, currentData = null;
 let scrollPosition = 0;
-let locked = false; // 锁定状态
+let locked = false;
 
 function getInitialDate() {
   const saved = localStorage.getItem('lastViewedDate');
@@ -360,22 +360,14 @@ const fmtDur = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtDurShort = m => m===null||isNaN(m)?'--':`${Math.floor(m/60)}h${m%60}m`;
 const fmtMinOnly = m => m===null||isNaN(m)?'--':`${m}分钟`;
 
-// 锁定控制
-function isLocked() {
-  return locked;
-}
-
-function toggleLock() {
-  locked = !locked;
-  updateLockUI();
-}
+function isLocked() { return locked; }
+function toggleLock() { locked = !locked; updateLockUI(); }
 
 function updateLockUI() {
   const main = document.getElementById('mainContent');
   const lockBtn = document.getElementById('lockToggleBtn');
   const wakeBtn = document.getElementById('wakeTimeBtn');
   const copyBtn = document.getElementById('copyBtn');
-
   if (locked) {
     main.classList.add('disabled');
     lockBtn.textContent = '🔓 锁定编辑';
@@ -393,57 +385,44 @@ function updateLockUI() {
   }
 }
 
-// 自动锁定：昨天及以前自动锁定，今天解锁
 function autoLock() {
   const today = getTodayLocal();
   const showLockBtn = currentDate < today;
   document.getElementById('lockToggleBtn').style.display = showLockBtn ? '' : 'none';
-  if (showLockBtn) {
-    locked = true;
-  } else {
-    locked = false;
-  }
+  locked = showLockBtn;
   updateLockUI();
 }
 
-// 自动设置下一天的起床时间
 async function setNextDayWakeUp(todayDate, wakeTime) {
   if (!wakeTime) return;
   const nextDate = shiftDate(todayDate, 1);
   let nextRecord = await loadRecord(nextDate);
-  if (!nextRecord) {
-    nextRecord = createEmptyRecord(nextDate);
-  }
+  if (!nextRecord) nextRecord = createEmptyRecord(nextDate);
   if (!nextRecord.wake_up_time || nextRecord.wake_up_time === '07:00') {
     nextRecord.wake_up_time = wakeTime;
     await saveRecord(nextRecord);
   }
 }
 
-// 传播计划间隔
 function propagate(rec) {
   let naps = rec.naps;
   for (let i = 0; i < naps.length; i++) {
     const nap = naps[i];
-    if (nap.planned_wake_window !== undefined && nap.planned_wake_window !== null) {
+    if (nap.planned_wake_window != null) {
       const base = i === 0 ? rec.wake_up_time : naps[i-1].wake_time;
       if (base && base !== '--:--') {
         const newAsleep = toTime(toMin(base) + nap.planned_wake_window);
         nap.asleep_time = newAsleep;
-        if (!nap.bed_manual) {
-          nap.bed_time = toTime(toMin(newAsleep) - 10);
-        }
+        if (!nap.bed_manual) nap.bed_time = toTime(toMin(newAsleep) - 10);
       }
     }
   }
-  if (rec.night.planned_wake_window !== undefined && rec.night.planned_wake_window !== null) {
+  if (rec.night.planned_wake_window != null) {
     const base = naps.length ? naps[naps.length-1].wake_time : rec.wake_up_time;
     if (base && base !== '--:--') {
       const newAsleep = toTime(toMin(base) + rec.night.planned_wake_window);
       rec.night.asleep_time = newAsleep;
-      if (!rec.night.bed_manual) {
-        rec.night.bed_time = toTime(toMin(newAsleep) - 10);
-      }
+      if (!rec.night.bed_manual) rec.night.bed_time = toTime(toMin(newAsleep) - 10);
     }
   }
 }
@@ -481,8 +460,8 @@ function computeStats(rec) {
       awakeDur = awake;
     }
   } else {
+    // 历史日期：只加总小觉的清醒间隔
     let sum=0; rec.naps.forEach(n=>{ if(n.wake_window) sum+=n.wake_window; });
-    if(rec.night.before_night_window) sum+=rec.night.before_night_window;
     awakeDur = sum;
   }
   return { awakeDur, dayTotal, nightTotal, total };
@@ -656,13 +635,8 @@ function editWakeWindow(idx) {
     const newAsleep = toTime(toMin(base) + newWindowMin);
     const oldDuration = duration(nap.asleep_time, nap.wake_time);
     nap.asleep_time = newAsleep;
-    if (nap.wake_time && oldDuration !== null) {
-      nap.wake_time = toTime(toMin(newAsleep) + oldDuration);
-    }
-    // 只有非手动放床才自动设置
-    if (!nap.bed_manual) {
-      nap.bed_time = toTime(toMin(newAsleep) - 10);
-    }
+    if (nap.wake_time && oldDuration !== null) nap.wake_time = toTime(toMin(newAsleep) + oldDuration);
+    if (!nap.bed_manual) nap.bed_time = toTime(toMin(newAsleep) - 10);
     nap.planned_wake_window = newWindowMin;
     nap.bed_manual = nap.bed_manual || false;
     propagate(currentData);
@@ -679,12 +653,8 @@ function editNightWindow() {
     const newAsleep = toTime(toMin(base) + newWindowMin);
     const oldDuration = duration(night.asleep_time, night.wake_time);
     night.asleep_time = newAsleep;
-    if (night.wake_time && oldDuration !== null) {
-      night.wake_time = toTime(toMin(newAsleep) + oldDuration);
-    }
-    if (!night.bed_manual) {
-      night.bed_time = toTime(toMin(newAsleep) - 10);
-    }
+    if (night.wake_time && oldDuration !== null) night.wake_time = toTime(toMin(newAsleep) + oldDuration);
+    if (!night.bed_manual) night.bed_time = toTime(toMin(newAsleep) - 10);
     night.planned_wake_window = newWindowMin;
     night.bed_manual = night.bed_manual || false;
     propagate(currentData);
@@ -739,34 +709,13 @@ function openTimePicker(type, napIdx) {
       propagate(currentData);
     } else if(type.startsWith('nap')) {
       let nap = currentData.naps[napIdx];
-      if(type==='napBed') {
-        nap.bed_time = val;
-        nap.bed_manual = true;
-        delete nap.planned_wake_window;
-      } else if(type==='napAsleep') {
-        nap.asleep_time = val;
-        if (!nap.bed_manual) {
-          nap.bed_time = toTime(toMin(val) - 10);
-        }
-        delete nap.planned_wake_window;
-      } else if(type==='napWake') {
-        nap.wake_time = val;
-      }
+      if(type==='napBed') { nap.bed_time = val; nap.bed_manual = true; delete nap.planned_wake_window; }
+      else if(type==='napAsleep') { nap.asleep_time = val; if(!nap.bed_manual) nap.bed_time = toTime(toMin(val)-10); delete nap.planned_wake_window; }
+      else if(type==='napWake') { nap.wake_time = val; }
     } else if(type.startsWith('night')) {
-      if(type==='nightBed') {
-        currentData.night.bed_time = val;
-        currentData.night.bed_manual = true;
-        delete currentData.night.planned_wake_window;
-      } else if(type==='nightAsleep') {
-        currentData.night.asleep_time = val;
-        if (!currentData.night.bed_manual) {
-          currentData.night.bed_time = toTime(toMin(val) - 10);
-        }
-        delete currentData.night.planned_wake_window;
-      } else if(type==='nightWake') {
-        currentData.night.wake_time = val;
-        await setNextDayWakeUp(currentData.date, val);
-      }
+      if(type==='nightBed') { currentData.night.bed_time = val; currentData.night.bed_manual = true; delete currentData.night.planned_wake_window; }
+      else if(type==='nightAsleep') { currentData.night.asleep_time = val; if(!currentData.night.bed_manual) currentData.night.bed_time = toTime(toMin(val)-10); delete currentData.night.planned_wake_window; }
+      else if(type==='nightWake') { currentData.night.wake_time = val; await setNextDayWakeUp(currentData.date, val); }
     }
     propagate(currentData);
     saveAndRender();
@@ -787,9 +736,7 @@ function buildLoopWheel(id, min, max, selected, step=1) {
   let wheel = document.getElementById(id);
   wheel.innerHTML = '';
   const data = [];
-  for(let r=0; r<3; r++) {
-    for(let i=min; i<=max; i+=step) data.push(i);
-  }
+  for(let r=0; r<3; r++) for(let i=min; i<=max; i+=step) data.push(i);
   const middleStart = data.length/3;
   data.forEach((val, idx)=>{
     let div = document.createElement('div');
@@ -800,9 +747,7 @@ function buildLoopWheel(id, min, max, selected, step=1) {
   });
   let targetIdx = middleStart + (selected - min) / step;
   let targetItem = wheel.children[targetIdx];
-  if(targetItem) {
-    wheel.scrollTop = targetItem.offsetTop - wheel.clientHeight/2 + targetItem.offsetHeight/2;
-  }
+  if(targetItem) wheel.scrollTop = targetItem.offsetTop - wheel.clientHeight/2 + targetItem.offsetHeight/2;
   wheel.onscroll = () => {
     let center = wheel.scrollTop + wheel.clientHeight/2;
     let best = null, minDist = Infinity;
@@ -813,8 +758,7 @@ function buildLoopWheel(id, min, max, selected, step=1) {
     });
     if(best) {
       [...wheel.children].forEach(el => { el.style.color = 'var(--label)'; el.style.fontWeight = '400'; });
-      best.style.color = 'var(--text)';
-      best.style.fontWeight = '600';
+      best.style.color = 'var(--text)'; best.style.fontWeight = '600';
     }
     updatePickerPreview();
   };
@@ -833,8 +777,7 @@ function getPickerValue() {
     });
     return best ? best.dataset.value : null;
   };
-  let h = getCenterVal(hWheel);
-  let m = getCenterVal(mWheel);
+  let h = getCenterVal(hWheel); let m = getCenterVal(mWheel);
   if(!h || !m) return null;
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
 }
@@ -846,51 +789,25 @@ function updatePickerPreview() {
   let type = currentPicker.type, idx = currentPicker.napIdx;
   if(type==='napBed' || type==='nightBed') {
     let asleep = type==='napBed' ? currentData.naps[idx].asleep_time : currentData.night.asleep_time;
-    if(asleep) preview.textContent = `入睡耗时 ${duration(val, asleep)}分钟`;
-    else preview.textContent = '(缺入睡时间)';
+    preview.textContent = asleep ? `入睡耗时 ${duration(val, asleep)}分钟` : '(缺入睡时间)';
   } else if(type==='napAsleep') {
     let prev = idx===0 ? currentData.wake_up_time : currentData.naps[idx-1].wake_time;
-    if(prev) {
-      let winMin = duration(prev, val);
-      preview.textContent = winMin ? `清醒间隔 ${fmtDur(winMin)}` : '';
-    } else preview.textContent = '';
+    if(prev) { let w = duration(prev, val); preview.textContent = w ? `清醒间隔 ${fmtDur(w)}` : ''; }
+    else preview.textContent = '';
   } else if(type==='nightAsleep') {
     let last = currentData.naps.length ? currentData.naps[currentData.naps.length-1].wake_time : currentData.wake_up_time;
-    if(last) {
-      let winMin = duration(last, val);
-      preview.textContent = winMin ? `清醒间隔 ${fmtDur(winMin)}` : '';
-    } else preview.textContent = '';
+    if(last) { let w = duration(last, val); preview.textContent = w ? `清醒间隔 ${fmtDur(w)}` : ''; }
+    else preview.textContent = '';
   } else preview.textContent = '';
 }
 
-function confirmPicker() {
-  let val = getPickerValue();
-  if(val && currentPicker) currentPicker.onChange(val);
-  cancelPicker();
-}
-function cancelPicker() {
-  document.getElementById('timePickerOverlay').style.display = 'none';
-  currentPicker = null;
-}
+function confirmPicker() { let val = getPickerValue(); if(val && currentPicker) currentPicker.onChange(val); cancelPicker(); }
+function cancelPicker() { document.getElementById('timePickerOverlay').style.display = 'none'; currentPicker = null; }
 function openWakeTimePicker() { if(!isLocked()) openTimePicker('wake'); }
 
-function addNap() {
-  if (isLocked()) return;
-  currentData.naps.push({ bed_time:'', asleep_time:'', wake_time:'', sleep_method:'自主', wake_method:'自己醒', note:'', sleep_note:'' });
-  saveAndRender();
-}
-function deleteNap(idx) {
-  if (isLocked()) return;
-  if(!confirm('删除第'+(idx+1)+'觉？')) return;
-  currentData.naps.splice(idx,1);
-  propagate(currentData);
-  saveAndRender();
-}
-function saveAndRender() {
-  computeAll(currentData);
-  saveRecord(currentData);
-  renderAll();
-}
+function addNap() { if(isLocked()) return; currentData.naps.push({ bed_time:'', asleep_time:'', wake_time:'', sleep_method:'自主', wake_method:'自己醒', note:'', sleep_note:'' }); saveAndRender(); }
+function deleteNap(idx) { if(isLocked()) return; if(!confirm('删除第'+(idx+1)+'觉？')) return; currentData.naps.splice(idx,1); propagate(currentData); saveAndRender(); }
+function saveAndRender() { computeAll(currentData); saveRecord(currentData); renderAll(); }
 
 async function changeDate(delta) {
   scrollPosition = window.scrollY;
@@ -904,9 +821,7 @@ async function loadCurrentDate() {
   if(!rec) {
     let prev = await loadRecord(shiftDate(currentDate, -1));
     rec = createEmptyRecord(currentDate);
-    if(prev && prev.naps.length) {
-      rec.naps = prev.naps.map(()=>({ bed_time:'',asleep_time:'',wake_time:'',sleep_method:'',wake_method:'',note:'',sleep_note:'' }));
-    }
+    if(prev && prev.naps.length) rec.naps = prev.naps.map(()=>({ bed_time:'',asleep_time:'',wake_time:'',sleep_method:'',wake_method:'',note:'',sleep_note:'' }));
     await saveRecord(rec);
   }
   currentData = rec;
@@ -923,24 +838,11 @@ async function copyYesterday() {
   copy.date = currentDate;
   copy.naps.forEach(n => { n.note = ''; n.sleep_note = ''; });
   copy.night.note = ''; copy.night.sleep_note = '';
-
-  if (copy.night && copy.night.wake_time) {
-    copy.wake_up_time = copy.night.wake_time;
-  }
-  copy.naps.forEach((nap, i) => {
-    nap.planned_wake_window = nap.wake_window || null;
-    nap.bed_time = '';
-    nap.asleep_time = '';
-    nap.wake_time = '';
-    delete nap.sleep_duration;
-    delete nap.bed_manual;
-  });
+  if(copy.night && copy.night.wake_time) copy.wake_up_time = copy.night.wake_time;
+  copy.naps.forEach(nap => { nap.planned_wake_window = nap.wake_window || null; nap.bed_time = ''; nap.asleep_time = ''; nap.wake_time = ''; delete nap.sleep_duration; delete nap.bed_manual; });
   copy.night.planned_wake_window = copy.night.before_night_window || null;
-  copy.night.bed_time = '';
-  copy.night.asleep_time = '';
-  copy.night.wake_time = '';
-  delete copy.night.sleep_duration;
-  delete copy.night.bed_manual;
+  copy.night.bed_time = ''; copy.night.asleep_time = ''; copy.night.wake_time = '';
+  delete copy.night.sleep_duration; delete copy.night.bed_manual;
   currentData = copy;
   propagate(currentData);
   await saveRecord(currentData);
@@ -948,48 +850,28 @@ async function copyYesterday() {
 }
 
 function exportData() {
-  let tx = db.transaction(STORE_NAME,'readonly');
-  let all = tx.objectStore(STORE_NAME).getAll();
+  let tx = db.transaction(STORE_NAME,'readonly'); let all = tx.objectStore(STORE_NAME).getAll();
   all.onsuccess = ()=>{
-    let json = JSON.stringify(all.result,null,2);
-    let blob = new Blob([json],{type:'application/json'});
-    let a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `宝宝睡眠备份_${getTodayLocal()}.json`;
-    a.click();
+    let json = JSON.stringify(all.result,null,2); let blob = new Blob([json],{type:'application/json'});
+    let a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `宝宝睡眠备份_${getTodayLocal()}.json`; a.click();
   };
 }
 function importData() {
   let inp = document.createElement('input'); inp.type='file'; inp.accept='.json';
   inp.onchange = async e=>{
     let file = e.target.files[0]; if(!file) return;
-    let text = await file.text();
-    let records; try{ records=JSON.parse(text); }catch{ return alert('格式错误'); }
-    let tx = db.transaction(STORE_NAME,'readwrite');
-    let store = tx.objectStore(STORE_NAME);
-    records.forEach(r=>store.put(r));
-    tx.oncomplete = ()=>{ loadCurrentDate(); alert('导入成功'); };
-  };
-  inp.click();
+    let text = await file.text(); let records; try{ records=JSON.parse(text); }catch{ return alert('格式错误'); }
+    let tx = db.transaction(STORE_NAME,'readwrite'); let store = tx.objectStore(STORE_NAME);
+    records.forEach(r=>store.put(r)); tx.oncomplete = ()=>{ loadCurrentDate(); alert('导入成功'); };
+  }; inp.click();
 }
 
-function toggleDark() {
-  document.body.classList.toggle('dark');
-  localStorage.setItem('darkMode', document.body.classList.contains('dark'));
-}
+function toggleDark() { document.body.classList.toggle('dark'); localStorage.setItem('darkMode', document.body.classList.contains('dark')); }
 setInterval(()=>{
-  if(currentData && currentData.date===getTodayLocal()) {
-    let stats = computeStats(currentData);
-    document.getElementById('statAwake').textContent = stats.awakeDur!==null?fmtDurShort(stats.awakeDur):'--';
-  }
+  if(currentData && currentData.date===getTodayLocal()) { let stats = computeStats(currentData); document.getElementById('statAwake').textContent = stats.awakeDur!==null?fmtDurShort(stats.awakeDur):'--'; }
 },30000);
 
-(async ()=>{
-  await openDB();
-  if(localStorage.getItem('darkMode')==='true') document.body.classList.add('dark');
-  autoLock();
-  await loadCurrentDate();
-})();
+(async ()=>{ await openDB(); if(localStorage.getItem('darkMode')==='true') document.body.classList.add('dark'); autoLock(); await loadCurrentDate(); })();
 </script>
 </body>
 </html>
