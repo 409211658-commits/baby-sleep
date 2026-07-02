@@ -51,8 +51,28 @@
   .date-nav { display: flex; align-items: center; gap: 8px; }
   .date-nav button { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--primary); padding: 4px 8px; border-radius: 6px; }
   .date-nav span { font-weight: 600; font-size: 18px; }
-  .wake-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .wake-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .wake-row label { font-size: 16px; color: var(--label); }
+  .yesterday-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    font-size: 14px;
+    color: var(--label);
+  }
+  .yesterday-row input {
+    flex: 1;
+    min-width: 80px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+  }
   .btn { background: var(--primary); color: white; border: none; padding: 10px 16px; border-radius: 10px; font-size: 15px; cursor: pointer; font-weight: 500; }
   .btn.outline { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
   .btn.warn { background: var(--danger); color: white; }
@@ -239,7 +259,11 @@
     <label>起床时间:</label>
     <button class="time-btn" id="wakeTimeBtn" onclick="if(!locked)openWakeTimePicker()">07:00</button>
     <button class="btn outline" onclick="copyYesterday()" id="copyBtn">复制昨日</button>
-    <button class="btn warn outline" id="lockToggleBtn" onclick="toggleLock()" style="display:none;">🔒 解锁编辑</button>
+    <button class="btn outline" id="lockToggleBtn" onclick="toggleLock()" style="display:none;">🔓 解锁编辑</button>
+  </div>
+  <div class="yesterday-row" id="yesterdayRow">
+    <span>昨夜入睡 <strong id="yesterdayAsleep">--:--</strong></span>
+    <input type="text" placeholder="昨夜备注" id="yesterdayNoteInput" onchange="onYesterdayNoteChange()">
   </div>
 </div>
 
@@ -370,16 +394,14 @@ function updateLockUI() {
   const copyBtn = document.getElementById('copyBtn');
   if (locked) {
     main.classList.add('disabled');
-    lockBtn.textContent = '🔓 锁定编辑';
-    lockBtn.classList.remove('warn', 'outline');
-    lockBtn.classList.add('btn');
+    lockBtn.textContent = '🔒 锁定编辑';
+    lockBtn.className = 'btn';
     wakeBtn.disabled = true;
     if (copyBtn) copyBtn.style.display = 'none';
   } else {
     main.classList.remove('disabled');
-    lockBtn.textContent = '🔒 解锁编辑';
-    lockBtn.classList.add('warn', 'outline');
-    lockBtn.classList.remove('btn');
+    lockBtn.textContent = '🔓 解锁编辑';
+    lockBtn.className = 'btn outline';
     wakeBtn.disabled = false;
     if (copyBtn) copyBtn.style.display = '';
   }
@@ -445,39 +467,52 @@ function computeStats(rec) {
   let dayTotal=0; rec.naps.forEach(n=>{ if(n.sleep_duration) dayTotal+=n.sleep_duration; });
   let nightTotal = rec.night.sleep_duration || 0;
   let total = dayTotal+nightTotal;
-  let awakeDur = null;
-  if(rec.date === getTodayLocal()) {
-    let now = new Date().getHours()*60 + new Date().getMinutes();
-    let wakeMin = toMin(rec.wake_up_time);
-    if(wakeMin!==undefined) {
-      let awake = now - wakeMin; if(awake<0) awake+=1440;
-      let completed = 0;
-      rec.naps.forEach(n=>{ if(n.sleep_duration) completed+=n.sleep_duration; });
-      let lastNap = rec.naps[rec.naps.length-1];
-      if(lastNap && lastNap.asleep_time && !lastNap.wake_time) completed += (now - toMin(lastNap.asleep_time));
-      if(rec.night.asleep_time && !rec.night.wake_time) completed += (now - toMin(rec.night.asleep_time));
-      awake -= completed; if(awake<0) awake=0;
-      awakeDur = awake;
-    }
+  // 统一：所有小觉的清醒间隔加总
+  let awakeSum = 0;
+  rec.naps.forEach(n=>{ if(n.wake_window) awakeSum += n.wake_window; });
+  return { awakeDur: awakeSum, dayTotal, nightTotal, total };
+}
+
+// ==================== 昨日信息 ====================
+async function loadYesterdayInfo() {
+  const yesterday = shiftDate(currentDate, -1);
+  const rec = await loadRecord(yesterday);
+  const asleepEl = document.getElementById('yesterdayAsleep');
+  const noteInput = document.getElementById('yesterdayNoteInput');
+  if (rec && rec.night && rec.night.asleep_time) {
+    asleepEl.textContent = rec.night.asleep_time;
   } else {
-    // 历史日期：只加总小觉的清醒间隔
-    let sum=0; rec.naps.forEach(n=>{ if(n.wake_window) sum+=n.wake_window; });
-    awakeDur = sum;
+    asleepEl.textContent = '--:--';
   }
-  return { awakeDur, dayTotal, nightTotal, total };
+  if (rec && rec.night) {
+    noteInput.value = rec.night.note || '';
+  } else {
+    noteInput.value = '';
+  }
+}
+
+async function onYesterdayNoteChange() {
+  const note = document.getElementById('yesterdayNoteInput').value;
+  const yesterday = shiftDate(currentDate, -1);
+  let rec = await loadRecord(yesterday);
+  if (!rec) {
+    rec = createEmptyRecord(yesterday);
+  }
+  rec.night.note = note;
+  await saveRecord(rec);
 }
 
 // ==================== 渲染 ====================
 function renderAll() {
   computeAll(currentData);
   let stats = computeStats(currentData);
-  document.getElementById('statAwake').textContent = stats.awakeDur!==null?fmtDurShort(stats.awakeDur):'--';
+  document.getElementById('statAwake').textContent = stats.awakeDur !== null ? fmtDurShort(stats.awakeDur) : '--';
   document.getElementById('statDaySleep').textContent = fmtDurShort(stats.dayTotal);
   document.getElementById('statNightSleep').textContent = fmtDurShort(stats.nightTotal);
   document.getElementById('statTotalSleep').textContent = fmtDurShort(stats.total);
   document.getElementById('wakeTimeBtn').textContent = currentData.wake_up_time;
   document.getElementById('dateDisplay').textContent = currentData.date;
-  document.getElementById('todayIndicator').textContent = currentData.date===getTodayLocal()?'今天':'';
+  document.getElementById('todayIndicator').textContent = currentData.date === getTodayLocal() ? '今天' : '';
   renderNaps();
   renderNight();
 }
@@ -815,6 +850,7 @@ async function changeDate(delta) {
   localStorage.setItem('lastViewedDate', currentDate);
   autoLock();
   await loadCurrentDate();
+  await loadYesterdayInfo();
 }
 async function loadCurrentDate() {
   let rec = await loadRecord(currentDate);
@@ -838,7 +874,12 @@ async function copyYesterday() {
   copy.date = currentDate;
   copy.naps.forEach(n => { n.note = ''; n.sleep_note = ''; });
   copy.night.note = ''; copy.night.sleep_note = '';
-  if(copy.night && copy.night.wake_time) copy.wake_up_time = copy.night.wake_time;
+  // 起床时间保护：如果当前起床时间不是默认值，保留它
+  if (!currentData || !currentData.wake_up_time || currentData.wake_up_time === '07:00') {
+    if (copy.night && copy.night.wake_time) copy.wake_up_time = copy.night.wake_time;
+  } else {
+    copy.wake_up_time = currentData.wake_up_time;
+  }
   copy.naps.forEach(nap => { nap.planned_wake_window = nap.wake_window || null; nap.bed_time = ''; nap.asleep_time = ''; nap.wake_time = ''; delete nap.sleep_duration; delete nap.bed_manual; });
   copy.night.planned_wake_window = copy.night.before_night_window || null;
   copy.night.bed_time = ''; copy.night.asleep_time = ''; copy.night.wake_time = '';
@@ -867,11 +908,14 @@ function importData() {
 }
 
 function toggleDark() { document.body.classList.toggle('dark'); localStorage.setItem('darkMode', document.body.classList.contains('dark')); }
-setInterval(()=>{
-  if(currentData && currentData.date===getTodayLocal()) { let stats = computeStats(currentData); document.getElementById('statAwake').textContent = stats.awakeDur!==null?fmtDurShort(stats.awakeDur):'--'; }
-},30000);
 
-(async ()=>{ await openDB(); if(localStorage.getItem('darkMode')==='true') document.body.classList.add('dark'); autoLock(); await loadCurrentDate(); })();
+(async ()=>{
+  await openDB();
+  if(localStorage.getItem('darkMode')==='true') document.body.classList.add('dark');
+  autoLock();
+  await loadCurrentDate();
+  await loadYesterdayInfo();
+})();
 </script>
 </body>
 </html>
