@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>宝宝睡眠记录</title>
 <style>
   :root {
@@ -50,7 +50,7 @@
   .date-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   .date-nav { display: flex; align-items: center; gap: 8px; }
   .date-nav button { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--primary); padding: 4px 8px; border-radius: 6px; }
-  .date-nav span { font-weight: 600; font-size: 18px; }
+  .date-nav span { font-weight: 600; font-size: 18px; cursor: pointer; }
   .wake-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .wake-row label { font-size: 16px; color: var(--label); }
   .yesterday-row {
@@ -241,6 +241,14 @@
     .nowrap-row .time-btn { padding: 5px 6px; }
     .calc-value { font-size: 13px; padding: 2px 5px; }
   }
+  /* 隐藏日期输入框，但保留功能 */
+  #datePickerInput {
+    position: absolute;
+    opacity: 0;
+    height: 0;
+    width: 0;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -250,11 +258,12 @@
   <div class="date-row">
     <div class="date-nav">
       <button onclick="changeDate(-1)">◀</button>
-      <span id="dateDisplay">2026-06-13</span>
+      <span id="dateDisplay" onclick="document.getElementById('datePickerInput').showPicker()">2026-06-13</span>
       <button onclick="changeDate(1)">▶</button>
     </div>
     <div id="todayIndicator" style="font-size:13px;color:var(--primary)"></div>
   </div>
+  <input type="date" id="datePickerInput" onchange="jumpToDate(this.value)">
   <div class="wake-row">
     <label>起床时间:</label>
     <button class="time-btn" id="wakeTimeBtn" onclick="if(!locked)openWakeTimePicker()">07:00</button>
@@ -324,18 +333,11 @@
 <script>
 // ==================== 数据库 ====================
 const DB_NAME = 'BabySleepDB8', STORE_NAME = 'records';
-let db, currentDate, currentData = null;
+let db, currentDate = getTodayLocal(), currentData = null;
 let scrollPosition = 0;
 let locked = false;
 
-function getInitialDate() {
-  const saved = localStorage.getItem('lastViewedDate');
-  if (saved) return saved;
-  return getTodayLocal();
-}
-
-currentDate = getInitialDate();
-
+function getTodayLocal() { return getLocalDateString(new Date()); }
 function getLocalDateString(date) {
   const d = date instanceof Date ? date : new Date(date + 'T00:00:00');
   const y = d.getFullYear();
@@ -343,7 +345,6 @@ function getLocalDateString(date) {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
-function getTodayLocal() { return getLocalDateString(new Date()); }
 function shiftDate(dateStr, delta) {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + delta);
@@ -426,6 +427,17 @@ async function setNextDayWakeUp(todayDate, wakeTime) {
   }
 }
 
+async function setPreviousNightWake(todayDate, wakeTime) {
+  if (!wakeTime) return;
+  const prevDate = shiftDate(todayDate, -1);
+  let prevRecord = await loadRecord(prevDate);
+  if (!prevRecord) return;
+  if (!prevRecord.night.wake_time || prevRecord.night.wake_time === '07:15') {
+    prevRecord.night.wake_time = wakeTime;
+    await saveRecord(prevRecord);
+  }
+}
+
 function propagate(rec) {
   let naps = rec.naps;
   for (let i = 0; i < naps.length; i++) {
@@ -467,7 +479,6 @@ function computeStats(rec) {
   let dayTotal=0; rec.naps.forEach(n=>{ if(n.sleep_duration) dayTotal+=n.sleep_duration; });
   let nightTotal = rec.night.sleep_duration || 0;
   let total = dayTotal+nightTotal;
-  // 统一：所有小觉的清醒间隔加总
   let awakeSum = 0;
   rec.naps.forEach(n=>{ if(n.wake_window) awakeSum += n.wake_window; });
   return { awakeDur: awakeSum, dayTotal, nightTotal, total };
@@ -512,6 +523,7 @@ function renderAll() {
   document.getElementById('statTotalSleep').textContent = fmtDurShort(stats.total);
   document.getElementById('wakeTimeBtn').textContent = currentData.wake_up_time;
   document.getElementById('dateDisplay').textContent = currentData.date;
+  document.getElementById('datePickerInput').value = currentData.date;
   document.getElementById('todayIndicator').textContent = currentData.date === getTodayLocal() ? '今天' : '';
   renderNaps();
   renderNight();
@@ -741,6 +753,7 @@ function openTimePicker(type, napIdx) {
   currentPicker = { type, napIdx, def, onChange: async (val) => {
     if(type==='wake') {
       currentData.wake_up_time = val;
+      await setPreviousNightWake(currentData.date, val);
       propagate(currentData);
     } else if(type.startsWith('nap')) {
       let nap = currentData.naps[napIdx];
@@ -847,7 +860,14 @@ function saveAndRender() { computeAll(currentData); saveRecord(currentData); ren
 async function changeDate(delta) {
   scrollPosition = window.scrollY;
   currentDate = shiftDate(currentDate, delta);
-  localStorage.setItem('lastViewedDate', currentDate);
+  autoLock();
+  await loadCurrentDate();
+  await loadYesterdayInfo();
+}
+async function jumpToDate(dateStr) {
+  if (!dateStr) return;
+  scrollPosition = 0;
+  currentDate = dateStr;
   autoLock();
   await loadCurrentDate();
   await loadYesterdayInfo();
@@ -874,7 +894,7 @@ async function copyYesterday() {
   copy.date = currentDate;
   copy.naps.forEach(n => { n.note = ''; n.sleep_note = ''; });
   copy.night.note = ''; copy.night.sleep_note = '';
-  // 起床时间保护：如果当前起床时间不是默认值，保留它
+  // 起床时间保护
   if (!currentData || !currentData.wake_up_time || currentData.wake_up_time === '07:00') {
     if (copy.night && copy.night.wake_time) copy.wake_up_time = copy.night.wake_time;
   } else {
