@@ -51,35 +51,19 @@
   .date-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   .date-nav { display: flex; align-items: center; gap: 8px; }
   .date-nav button { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--primary); padding: 4px 8px; border-radius: 6px; }
-  .date-indicator { display: flex; align-items: center; gap: 6px; }
-  #datePickerInput {
+  .date-indicator { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  #dateDisplayText {
     font-weight: 600;
     font-size: 18px;
-    border: none;
-    background: transparent;
     color: var(--text);
-    font-family: inherit;
-    padding: 0;
-    margin: 0;
-    max-width: 140px;
-    text-align: center;
-  }
-  #datePickerInput::-webkit-calendar-picker-indicator {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100%;
-    height: 100%;
-    color: transparent;
-    background: transparent;
+    text-decoration: underline dotted;
   }
   .record-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
     display: inline-block;
+    background: #ccc;
   }
   .wake-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .wake-row label { font-size: 16px; color: var(--label); }
@@ -264,6 +248,33 @@
   }
   .picker-preview { text-align: center; font-size: 16px; color: var(--label); min-height: 24px; margin-top: 8px; }
 
+  /* 日历弹窗样式 */
+  .cal-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; z-index: 300;
+  }
+  .cal-container {
+    background: var(--card); border-radius: 24px; padding: 20px; width: 90%; max-width: 400px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+  }
+  .cal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .cal-header button { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--primary); padding: 4px 8px; }
+  .cal-month { font-weight: 700; font-size: 18px; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
+  .cal-day-header { font-size: 13px; color: var(--label); padding: 4px 0; }
+  .cal-day {
+    height: 36px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 8px; cursor: pointer; font-size: 14px; position: relative;
+  }
+  .cal-day:hover { background: var(--bg); }
+  .cal-day.today { font-weight: 700; color: var(--primary); }
+  .cal-day.other-month { color: var(--label); opacity: 0.4; pointer-events: none; }
+  .cal-dot {
+    width: 5px; height: 5px; border-radius: 50%; margin-top: 2px;
+  }
+  .cal-dot.has-data { background: #2E7D32; }
+  .cal-dot.no-data { background: #ccc; }
+
   @media (max-width: 400px) {
     .stats { grid-template-columns: repeat(2, 1fr); }
     .field-label { width: 60px; }
@@ -280,9 +291,9 @@
   <div class="date-row">
     <div class="date-nav">
       <button onclick="changeDate(-1)">◀</button>
-      <div class="date-indicator">
-        <input type="date" id="datePickerInput" onchange="jumpToDate(this.value)">
-        <span class="record-dot" id="recordDot" style="background: #ccc;"></span>
+      <div class="date-indicator" onclick="openCalendar()">
+        <span id="dateDisplayText">2026-07-14</span>
+        <span class="record-dot" id="recordDot"></span>
       </div>
       <button onclick="changeDate(1)">▶</button>
     </div>
@@ -354,12 +365,26 @@
   </div>
 </div>
 
+<!-- 自定义日历弹窗 -->
+<div id="calendarOverlay" class="cal-overlay" style="display:none;" onclick="if(event.target===this)closeCalendar()">
+  <div class="cal-container">
+    <div class="cal-header">
+      <button onclick="changeCalMonth(-1)">◀</button>
+      <span class="cal-month" id="calMonthLabel"></span>
+      <button onclick="changeCalMonth(1)">▶</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+  </div>
+</div>
+
 <script>
 // ==================== 数据库 ====================
 const DB_NAME = 'BabySleepDB8', STORE_NAME = 'records';
 let db, currentDate = getTodayLocal(), currentData = null;
 let scrollPosition = 0;
 let locked = false;
+// 日历状态
+let calYear, calMonth;
 
 function getTodayLocal() { return getLocalDateString(new Date()); }
 function getLocalDateString(date) {
@@ -456,7 +481,6 @@ async function setPreviousNightWake(todayDate, wakeTime) {
   const prevDate = shiftDate(todayDate, -1);
   let prevRecord = await loadRecord(prevDate);
   if (!prevRecord) return;
-  // 无条件覆盖前一天夜觉结束时间
   prevRecord.night.wake_time = wakeTime;
   await saveRecord(prevRecord);
 }
@@ -507,22 +531,9 @@ function computeStats(rec) {
   return { awakeDur: awakeSum, dayTotal, nightTotal, total };
 }
 
-async function updateDateRangeAndDot() {
-  const tx = db.transaction(STORE_NAME, 'readonly');
-  const store = tx.objectStore(STORE_NAME);
-  const all = await new Promise(resolve => {
-    const req = store.getAll();
-    req.onsuccess = () => resolve(req.result);
-  });
-  const dates = all.map(r => r.date).sort();
-  const input = document.getElementById('datePickerInput');
-  if (dates.length > 0) {
-    input.min = dates[0];
-    input.max = dates[dates.length-1];
-  } else {
-    input.min = '';
-    input.max = '';
-  }
+async function updateDateDisplay() {
+  document.getElementById('dateDisplayText').textContent = currentDate;
+  // 更新圆点
   const dot = document.getElementById('recordDot');
   if (currentData && currentData.naps && (currentData.naps.length > 0 || currentData.night.asleep_time !== '19:40')) {
     dot.style.background = '#2E7D32';
@@ -559,6 +570,88 @@ async function onYesterdayNoteChange() {
   await saveRecord(rec);
 }
 
+// ==================== 自定义日历 ====================
+async function openCalendar() {
+  // 以当前日期的年月初始化
+  const d = new Date(currentDate + 'T00:00:00');
+  calYear = d.getFullYear();
+  calMonth = d.getMonth() + 1;
+  await renderCalendar();
+  document.getElementById('calendarOverlay').style.display = 'flex';
+}
+
+function closeCalendar() {
+  document.getElementById('calendarOverlay').style.display = 'none';
+}
+
+async function changeCalMonth(delta) {
+  calMonth += delta;
+  if (calMonth > 12) { calMonth = 1; calYear++; }
+  if (calMonth < 1) { calMonth = 12; calYear--; }
+  await renderCalendar();
+}
+
+async function renderCalendar() {
+  const monthLabel = document.getElementById('calMonthLabel');
+  monthLabel.textContent = `${calYear}年 ${calMonth}月`;
+  const grid = document.getElementById('calGrid');
+  grid.innerHTML = '';
+
+  // 表头
+  const headers = ['一','二','三','四','五','六','日'];
+  headers.forEach(h => {
+    const div = document.createElement('div');
+    div.className = 'cal-day-header';
+    div.textContent = h;
+    grid.appendChild(div);
+  });
+
+  // 获取有数据的日期集合
+  const tx = db.transaction(STORE_NAME, 'readonly');
+  const allRecords = await new Promise(resolve => {
+    const req = tx.objectStore(STORE_NAME).getAll();
+    req.onsuccess = () => resolve(req.result);
+  });
+  const dataDates = new Set(allRecords.filter(r => {
+    // 判断是否有真实数据：存在小觉或夜觉有自定义时间
+    return r.naps && (r.naps.length > 0 || r.night.asleep_time !== '19:40');
+  }).map(r => r.date));
+
+  // 当月第一天
+  const firstDay = new Date(calYear, calMonth-1, 1);
+  const startDayOfWeek = firstDay.getDay(); // 0=日, 1=一...6=六
+  // 调整为周一=0
+  const startOffset = (startDayOfWeek === 0) ? 6 : startDayOfWeek - 1;
+  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
+  const todayStr = getTodayLocal();
+
+  // 填充前面的空白
+  for (let i = 0; i < startOffset; i++) {
+    const div = document.createElement('div');
+    div.className = 'cal-day other-month';
+    div.textContent = '';
+    grid.appendChild(div);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${calYear}-${String(calMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const div = document.createElement('div');
+    div.className = 'cal-day';
+    div.textContent = day;
+    if (dateStr === todayStr) div.classList.add('today');
+    if (dateStr === currentDate) div.style.background = 'var(--primary)'; div.style.color = 'white';
+    const dot = document.createElement('span');
+    dot.className = 'cal-dot ' + (dataDates.has(dateStr) ? 'has-data' : 'no-data');
+    div.appendChild(dot);
+    div.onclick = () => {
+      if (dateStr === currentDate) { closeCalendar(); return; }
+      jumpToDate(dateStr);
+      closeCalendar();
+    };
+    grid.appendChild(div);
+  }
+}
+
 // ==================== 渲染 ====================
 function renderAll() {
   computeAll(currentData);
@@ -568,11 +661,10 @@ function renderAll() {
   document.getElementById('statNightSleep').textContent = fmtDurShort(stats.nightTotal);
   document.getElementById('statTotalSleep').textContent = fmtDurShort(stats.total);
   document.getElementById('wakeTimeBtn').textContent = currentData.wake_up_time;
-  document.getElementById('datePickerInput').value = currentData.date;
   document.getElementById('todayIndicator').textContent = currentData.date === getTodayLocal() ? '今天' : '';
   renderNaps();
   renderNight();
-  updateDateRangeAndDot();
+  updateDateDisplay();
 }
 
 function renderNaps() {
