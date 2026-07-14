@@ -51,19 +51,12 @@
   .date-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   .date-nav { display: flex; align-items: center; gap: 8px; }
   .date-nav button { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--primary); padding: 4px 8px; border-radius: 6px; }
-  .date-indicator { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .date-indicator { cursor: pointer; }
   #dateDisplayText {
     font-weight: 600;
     font-size: 18px;
     color: var(--text);
     text-decoration: underline dotted;
-  }
-  .record-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-    background: #ccc;
   }
   .wake-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .wake-row label { font-size: 16px; color: var(--label); }
@@ -293,7 +286,6 @@
       <button onclick="changeDate(-1)">◀</button>
       <div class="date-indicator" onclick="openCalendar()">
         <span id="dateDisplayText">2026-07-14</span>
-        <span class="record-dot" id="recordDot"></span>
       </div>
       <button onclick="changeDate(1)">▶</button>
     </div>
@@ -383,7 +375,6 @@ const DB_NAME = 'BabySleepDB8', STORE_NAME = 'records';
 let db, currentDate = getTodayLocal(), currentData = null;
 let scrollPosition = 0;
 let locked = false;
-// 日历状态
 let calYear, calMonth;
 
 function getTodayLocal() { return getLocalDateString(new Date()); }
@@ -531,15 +522,8 @@ function computeStats(rec) {
   return { awakeDur: awakeSum, dayTotal, nightTotal, total };
 }
 
-async function updateDateDisplay() {
+function updateDateDisplay() {
   document.getElementById('dateDisplayText').textContent = currentDate;
-  // 更新圆点
-  const dot = document.getElementById('recordDot');
-  if (currentData && currentData.naps && (currentData.naps.length > 0 || currentData.night.asleep_time !== '19:40')) {
-    dot.style.background = '#2E7D32';
-  } else {
-    dot.style.background = '#ccc';
-  }
 }
 
 async function loadYesterdayInfo() {
@@ -572,7 +556,6 @@ async function onYesterdayNoteChange() {
 
 // ==================== 自定义日历 ====================
 async function openCalendar() {
-  // 以当前日期的年月初始化
   const d = new Date(currentDate + 'T00:00:00');
   calYear = d.getFullYear();
   calMonth = d.getMonth() + 1;
@@ -597,7 +580,6 @@ async function renderCalendar() {
   const grid = document.getElementById('calGrid');
   grid.innerHTML = '';
 
-  // 表头
   const headers = ['一','二','三','四','五','六','日'];
   headers.forEach(h => {
     const div = document.createElement('div');
@@ -606,26 +588,21 @@ async function renderCalendar() {
     grid.appendChild(div);
   });
 
-  // 获取有数据的日期集合
   const tx = db.transaction(STORE_NAME, 'readonly');
   const allRecords = await new Promise(resolve => {
     const req = tx.objectStore(STORE_NAME).getAll();
     req.onsuccess = () => resolve(req.result);
   });
   const dataDates = new Set(allRecords.filter(r => {
-    // 判断是否有真实数据：存在小觉或夜觉有自定义时间
     return r.naps && (r.naps.length > 0 || r.night.asleep_time !== '19:40');
   }).map(r => r.date));
 
-  // 当月第一天
   const firstDay = new Date(calYear, calMonth-1, 1);
-  const startDayOfWeek = firstDay.getDay(); // 0=日, 1=一...6=六
-  // 调整为周一=0
+  const startDayOfWeek = firstDay.getDay();
   const startOffset = (startDayOfWeek === 0) ? 6 : startDayOfWeek - 1;
   const daysInMonth = new Date(calYear, calMonth, 0).getDate();
   const todayStr = getTodayLocal();
 
-  // 填充前面的空白
   for (let i = 0; i < startOffset; i++) {
     const div = document.createElement('div');
     div.className = 'cal-day other-month';
@@ -639,7 +616,7 @@ async function renderCalendar() {
     div.className = 'cal-day';
     div.textContent = day;
     if (dateStr === todayStr) div.classList.add('today');
-    if (dateStr === currentDate) div.style.background = 'var(--primary)'; div.style.color = 'white';
+    if (dateStr === currentDate) { div.style.background = 'var(--primary)'; div.style.color = 'white'; }
     const dot = document.createElement('span');
     dot.className = 'cal-dot ' + (dataDates.has(dateStr) ? 'has-data' : 'no-data');
     div.appendChild(dot);
