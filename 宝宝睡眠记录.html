@@ -36,7 +36,7 @@
     min-height: 100vh;
     -webkit-tap-highlight-color: transparent;
     font-size: 16px;
-    touch-action: manipulation; /* 全局禁止双击放大 */
+    touch-action: manipulation;
   }
   .header {
     padding: 16px;
@@ -51,6 +51,36 @@
   .date-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
   .date-nav { display: flex; align-items: center; gap: 8px; }
   .date-nav button { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--primary); padding: 4px 8px; border-radius: 6px; }
+  .date-indicator { display: flex; align-items: center; gap: 6px; }
+  #datePickerInput {
+    font-weight: 600;
+    font-size: 18px;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    padding: 0;
+    margin: 0;
+    max-width: 140px;
+    text-align: center;
+  }
+  #datePickerInput::-webkit-calendar-picker-indicator {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    color: transparent;
+    background: transparent;
+  }
+  .record-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+  }
   .wake-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .wake-row label { font-size: 16px; color: var(--label); }
   .yesterday-row {
@@ -195,32 +225,6 @@
   .nowrap-row .calc-value { font-size: 14px; padding: 2px 6px; }
   .nowrap-row span { font-size: 14px; white-space: nowrap; }
 
-  /* 将日期输入框伪装成文本样式 */
-  #datePickerInput {
-    font-weight: 600;
-    font-size: 18px;
-    border: none;
-    background: transparent;
-    color: var(--text);
-    font-family: inherit;
-    padding: 0;
-    margin: 0;
-    max-width: 140px;
-    text-align: center;
-  }
-  /* 隐藏默认的日期选择器小三角，点击整个区域都能触发 */
-  #datePickerInput::-webkit-calendar-picker-indicator {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100%;
-    height: 100%;
-    color: transparent;
-    background: transparent;
-  }
-
   .picker-overlay {
     position: fixed; top: 0; left: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; z-index: 200;
@@ -276,8 +280,10 @@
   <div class="date-row">
     <div class="date-nav">
       <button onclick="changeDate(-1)">◀</button>
-      <!-- 日期直接使用 input date 类型，点击后弹出系统日历 -->
-      <input type="date" id="datePickerInput" onchange="jumpToDate(this.value)">
+      <div class="date-indicator">
+        <input type="date" id="datePickerInput" onchange="jumpToDate(this.value)">
+        <span class="record-dot" id="recordDot" style="background: #ccc;"></span>
+      </div>
       <button onclick="changeDate(1)">▶</button>
     </div>
     <div id="todayIndicator" style="font-size:13px;color:var(--primary)"></div>
@@ -450,10 +456,9 @@ async function setPreviousNightWake(todayDate, wakeTime) {
   const prevDate = shiftDate(todayDate, -1);
   let prevRecord = await loadRecord(prevDate);
   if (!prevRecord) return;
-  if (!prevRecord.night.wake_time || prevRecord.night.wake_time === '07:15') {
-    prevRecord.night.wake_time = wakeTime;
-    await saveRecord(prevRecord);
-  }
+  // 无条件覆盖前一天夜觉结束时间
+  prevRecord.night.wake_time = wakeTime;
+  await saveRecord(prevRecord);
 }
 
 function propagate(rec) {
@@ -502,7 +507,30 @@ function computeStats(rec) {
   return { awakeDur: awakeSum, dayTotal, nightTotal, total };
 }
 
-// ==================== 昨日信息 ====================
+async function updateDateRangeAndDot() {
+  const tx = db.transaction(STORE_NAME, 'readonly');
+  const store = tx.objectStore(STORE_NAME);
+  const all = await new Promise(resolve => {
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result);
+  });
+  const dates = all.map(r => r.date).sort();
+  const input = document.getElementById('datePickerInput');
+  if (dates.length > 0) {
+    input.min = dates[0];
+    input.max = dates[dates.length-1];
+  } else {
+    input.min = '';
+    input.max = '';
+  }
+  const dot = document.getElementById('recordDot');
+  if (currentData && currentData.naps && (currentData.naps.length > 0 || currentData.night.asleep_time !== '19:40')) {
+    dot.style.background = '#2E7D32';
+  } else {
+    dot.style.background = '#ccc';
+  }
+}
+
 async function loadYesterdayInfo() {
   const yesterday = shiftDate(currentDate, -1);
   const rec = await loadRecord(yesterday);
@@ -544,6 +572,7 @@ function renderAll() {
   document.getElementById('todayIndicator').textContent = currentData.date === getTodayLocal() ? '今天' : '';
   renderNaps();
   renderNight();
+  updateDateRangeAndDot();
 }
 
 function renderNaps() {
